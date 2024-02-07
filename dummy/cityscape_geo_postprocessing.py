@@ -1,3 +1,6 @@
+import asyncio
+import time
+
 from shapely.geometry import shape, mapping
 from shapely.ops import unary_union
 from mongrations.mongration import Mongration
@@ -16,7 +19,8 @@ def correct_polygon(doc):
         doc['original_id'] = doc['_id']
     return doc
 
-
+def fake_op(doc):
+    pass
 def mongration(mongration: Mongration):
     remote_intersecting_geo_objs = mongration.phase("Remove intersecting GeoJSON objects")
     remote_intersecting_geo_objs.from_collection("lots", "geojson")
@@ -26,3 +30,4 @@ def mongration(mongration: Mongration):
     associate_with_address = mongration.phase("Associate GeoJSON with address")
     associate_with_address.from_phase(remote_intersecting_geo_objs)
     associate_with_address.into_collection("lots", "geometry")
+    associate_with_address.use_python(fake_op)

@@ -1,3 +1,6 @@
+import asyncio
+from typing import Any
+
 from motor.motor_asyncio import AsyncIOMotorClient
 
 
@@ -5,14 +8,6 @@ class Source:
     pass
 
     def cursor(self, client: AsyncIOMotorClient):
-        pass
-
-
-class PhaseSource(Source):
-    def __init__(self, source):
-        self._source = source
-
-    async def cursor(self, client: AsyncIOMotorClient):
         pass
 
 

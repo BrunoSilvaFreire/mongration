@@ -4,7 +4,7 @@ from pathlib import Path
 
 from motor.motor_asyncio import AsyncIOMotorClient
 
-from mongrations.engine.sequential_engine import SequentialEngine
+from mongrations.engine.asyncio_engine import AsyncIOEngine
 from mongrations.graph import DependencyGraph
 from mongrations.mongration import Mongration
 from mongrations.phase import Phase
@@ -52,7 +52,7 @@ def run_mongration(args):
         mongration_instance = Mongration()
         mongration_function(mongration_instance)
 
-        engine = SequentialEngine()
+        engine = AsyncIOEngine()
         phases = mongration_instance.phases()
         graph = build_dependency_graph(phases)
         client = AsyncIOMotorClient("mongodb://root:letmein@localhost:27017")
