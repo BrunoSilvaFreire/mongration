@@ -10,6 +10,7 @@ class Pipe(Source, Destination):
     def __init__(self):
         self._queue = asyncio.Queue()
         self._end_of_pipe = False
+        self._total_hint = None
 
     async def push(self, item):
         await self._queue.put(item)
@@ -20,7 +21,9 @@ class Pipe(Source, Destination):
         await self._queue.put(None)
 
     async def cursor(self, client: AsyncIOMotorClient):
-        return self._cursor(), None
+        while self._total_hint is None:
+            await asyncio.sleep(0)
+        return self._cursor(), self._total_hint
 
     async def _cursor(self):
         while not (self._end_of_pipe and self._queue.empty()):
@@ -29,6 +32,8 @@ class Pipe(Source, Destination):
                 break
             yield item
 
-
     def __str__(self):
         return "Pipe"
+
+    async def hint_total(self, estimated_total):
+        self._total_hint = estimated_total

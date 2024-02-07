@@ -7,6 +7,7 @@ from tqdm import tqdm
 
 from mongrations.engine.engine import Engine
 from mongrations.graph import DependencyGraph
+from mongrations.io.pipe import Pipe
 from mongrations.phase import Phase
 
 
@@ -18,9 +19,14 @@ class AsyncIOEngine(Engine):
             start = time.time()
             current_batch = 0
             batch_size = 64
-            generator = operation.invoke(client, progress, source)
+            maybe_pipe = None
+            if isinstance(destination, Pipe):
+                maybe_pipe = destination
+            if destination is not None:
+                destination.init(client)
+            generator = operation.invoke(client, progress, source, maybe_pipe)
             if destination is None:
-                async for new_doc in generator:
+                async for _ in generator:
                     current_batch += 1
                     if current_batch > batch_size:
                         current_batch = 0
@@ -53,14 +59,14 @@ class AsyncIOEngine(Engine):
             progress.update()
 
         operations = list()
-
+        progress_bars = list[tqdm]()
         def per_vertex(vertex_index):
             nonlocal index
             phase: Phase = graph[vertex_index]
-            progress = tqdm(position=index)
+            progress = tqdm(position=index, unit=" docs")
 
             operations.append(phase_process(phase, progress))
-
+            progress_bars.append(progress)
             index += 1
 
         def per_edge(src, dst):
@@ -75,3 +81,5 @@ class AsyncIOEngine(Engine):
             await asyncio.gather(*operations)
 
         asyncio.run(fence())
+        for bar in progress_bars:
+            bar.close()

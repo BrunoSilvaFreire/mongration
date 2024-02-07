@@ -3,3 +3,5 @@ class Destination:
         pass
     async def close(self):
         pass
+    def init(self, client):
+        pass

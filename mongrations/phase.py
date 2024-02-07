@@ -1,6 +1,7 @@
 from motor.motor_asyncio import AsyncIOMotorClient
 
 from mongrations.engine.operation import Operation, PythonOperation
+from mongrations.io.collection_destination import CollectionDestination
 from mongrations.io.destination import Destination
 from mongrations.io.pipe import Pipe
 from mongrations.io.source import Source, CollectionSource
@@ -48,7 +49,7 @@ class Phase:
         pass
 
     def into_collection(self, database: str, collection: str):
-        pass
+        self._destination = CollectionDestination(database, collection)
 
     def __str__(self):
         return f"Phase(name={self._name})"
