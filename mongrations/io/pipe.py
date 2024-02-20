@@ -7,7 +7,8 @@ from mongrations.io.source import Source
 
 
 class Pipe(Source, Destination):
-    def __init__(self):
+    def __init__(self, incomingPhase):
+        self.incomingPhase = incomingPhase
         self._queue = asyncio.Queue()
         self._end_of_pipe = False
         self._total_hint = None
@@ -35,5 +36,5 @@ class Pipe(Source, Destination):
     def __str__(self):
         return "Pipe"
 
-    async def hint_total(self, estimated_total):
+    def hint_total(self, estimated_total):
         self._total_hint = estimated_total

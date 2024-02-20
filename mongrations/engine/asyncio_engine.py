@@ -15,36 +15,19 @@ class AsyncIOEngine(Engine):
     def invoke(self, client: AsyncIOMotorClient, graph: DependencyGraph[Phase]):
         index = 0
 
-        async def invoke_operation(operation, progress, source, destination):
+        async def invoke_operation(phase: Phase, progress: tqdm):
             start = time.time()
             current_batch = 0
-            batch_size = 64
-            maybe_pipe = None
-            if isinstance(destination, Pipe):
-                maybe_pipe = destination
+            destination = phase.destination()
             if destination is not None:
                 destination.init(client)
-            generator = operation.invoke(client, progress, source, maybe_pipe)
-            if destination is None:
-                async for _ in generator:
-                    current_batch += 1
-                    if current_batch > batch_size:
-                        current_batch = 0
-                        await asyncio.sleep(0)
-
-            else:
-                async for new_doc in generator:
-                    current_batch += 1
-                    await destination.push(new_doc)
-                    if current_batch > batch_size:
-                        current_batch = 0
-                        await asyncio.sleep(0)
-                await destination.close()
+            total_processed = await phase.operation().invoke(client, progress, phase)
+            await destination.close()
 
             end = time.time()
-
+            phase.notify_completion()
             duration = end - start
-            return duration, current_batch
+            return duration, total_processed
 
         async def phase_process(phase, progress):
             operation = phase.operation()
@@ -53,13 +36,14 @@ class AsyncIOEngine(Engine):
                 raise Exception(f"Phase {name} has no operation.")
             source = phase.source()
             progress.set_description(f"{name} ({operation} @ {source})")
-            duration, total_docs = await invoke_operation(operation, progress, source, phase.destination())
+            duration, total_docs = await invoke_operation(phase, progress)
             progress.set_description(name)
             progress.display(f"Phase {name} took {duration:.2f} seconds and wrote {total_docs} docs")
             progress.update()
 
         operations = list()
         progress_bars = list[tqdm]()
+
         def per_vertex(vertex_index):
             nonlocal index
             phase: Phase = graph[vertex_index]

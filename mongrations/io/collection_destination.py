@@ -28,7 +28,11 @@ class CollectionDestination(Destination):
         requests = list()
         while not self.buffer.empty():
             entry = self.buffer.get()
-            requests.append(InsertOne(entry))
+            requests.append(UpdateOne({
+                "_id": entry["_id"]
+            }, {
+                "$set": entry
+            }, upsert=True))
         self._cached_collection.bulk_write(requests)
 
     async def close(self):

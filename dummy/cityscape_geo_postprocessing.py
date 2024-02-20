@@ -50,5 +50,22 @@ def mongration(mongration: Mongration):
 
     associate_with_address = mongration.phase("Associate GeoJSON with address")
     associate_with_address.from_phase(clean_up)
-    associate_with_address.use_python(identity)
+    associate_with_address.use_aggregation(
+        "lots",
+        "geometry",
+        [
+            {
+                "$match": {
+                    "_id": {
+                        "$exists": True
+                    }
+                }
+            },
+            {
+                "$set": {
+                    "IT_WORKS": True
+                }
+            }
+        ]
+    )
     associate_with_address.into_collection("lots", "geometry")
