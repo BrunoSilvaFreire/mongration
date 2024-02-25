@@ -7,8 +7,7 @@ from mongrations.io.source import Source
 
 
 class Pipe(Source, Destination):
-    def __init__(self, incomingPhase):
-        self.incomingPhase = incomingPhase
+    def __init__(self):
         self._queue = asyncio.Queue()
         self._end_of_pipe = False
         self._total_hint = None
@@ -32,6 +31,9 @@ class Pipe(Source, Destination):
             if item is None:
                 break
             yield item
+
+    def pipe_into(self, src, dst):
+        dst._source = self
 
     def __str__(self):
         return "Pipe"

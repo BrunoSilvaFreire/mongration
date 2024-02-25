@@ -2,8 +2,6 @@ import importlib
 import sys
 from pathlib import Path
 
-from motor.motor_asyncio import AsyncIOMotorClient
-
 from mongrations.engine.asyncio_engine import AsyncIOEngine
 from mongrations.graph import DependencyGraph
 from mongrations.mongration import Mongration
@@ -24,6 +22,23 @@ def load_mongration_script(script_path: Path):
         return None
 
 
+def run_mongration(args):
+    mongration_script = args.mongration
+    mongration_path = Path(mongration_script)
+    if not mongration_path.exists() or not mongration_path.is_file():
+        print(f"The specified mongration script does not exist: {mongration_script}")
+        return
+
+    mongration_function = load_mongration_script(mongration_path)
+    if mongration_function:
+        engine = AsyncIOEngine()
+        engine.invoke(lambda: load_mongration(mongration_function))
+
+        print("Mongration process completed successfully.")
+    else:
+        print("Failed to load the mongration function.")
+
+
 def build_dependency_graph(phases: list[Phase]) -> DependencyGraph[Phase]:
     dependency_graph = DependencyGraph()
     phase_id_cache = dict()
@@ -39,25 +54,26 @@ def build_dependency_graph(phases: list[Phase]) -> DependencyGraph[Phase]:
     return dependency_graph
 
 
-def run_mongration(args):
-    mongration_script = args.mongration
-    mongration_path = Path(mongration_script)
-    if not mongration_path.exists() or not mongration_path.is_file():
-        print(f"The specified mongration script does not exist: {mongration_script}")
-        return
+def _build_list(phases):
+    return ", ".join([f'"{phase.name()}"' for phase in phases])
 
-    mongration_function = load_mongration_script(mongration_path)
-    if mongration_function:
-        # Assuming Mongration class is defined somewhere within this script or imported
-        mongration_instance = Mongration()
-        mongration_function(mongration_instance)
 
-        engine = AsyncIOEngine()
-        phases = mongration_instance.phases()
-        graph = build_dependency_graph(phases)
-        client = AsyncIOMotorClient("mongodb://root:letmein@localhost:27017")
-        engine.invoke(client, graph)
+def load_mongration(mongration_function):
+    mongration_instance = Mongration()
+    mongration_function(mongration_instance)
 
-        print("Mongration process completed successfully.")
-    else:
-        print("Failed to load the mongration function.")
+    phases = mongration_instance.phases()
+    phases_without_source = list(filter(lambda phase: phase.source() is None, phases))
+    phases_without_dest = list(filter(lambda phase: phase.destination() is None, phases))
+    if len(phases_without_source) > 0 or len(phases_without_dest) > 0:
+        no_source_msg = _build_list(phases_without_source)
+        no_dest_msg = _build_list(phases_without_dest)
+        raise Exception(
+            f"Some phases are misconfigured. Phases without sources: [{no_source_msg}], Phases without destinations: [{no_dest_msg}].")
+    graph = build_dependency_graph(phases)
+    graph.print_to_terminal(
+        circle_radius=8,
+        padding=10,
+        name_selector=lambda phase: phase.name(),
+    )
+    return mongration_instance, graph

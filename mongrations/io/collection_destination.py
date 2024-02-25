@@ -1,9 +1,11 @@
+from asyncio import Future
 from queue import Queue
 
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorCollection
-from pymongo import UpdateOne, InsertOne
+from pymongo import UpdateOne
 
 from mongrations.io.destination import Destination
+from mongrations.io.source import CollectionSource
 
 
 class CollectionDestination(Destination):
@@ -35,5 +37,12 @@ class CollectionDestination(Destination):
             }, upsert=True))
         self._cached_collection.bulk_write(requests)
 
+    def pipe_into(self, src, dest):
+        dest._source = CollectionSource(self.database, self.collection, None)
+        dest.wait_for_phase(src)
+
     async def close(self):
         pass
+
+    def __str__(self):
+        return f"{self.database}/{self.collection}"

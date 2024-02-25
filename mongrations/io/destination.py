@@ -10,3 +10,5 @@ class Destination:
 
     def hint_total(self, estimated_total):
         pass
+    def pipe_into(self, source: "mongrations.phase.Phase", destination: "mongrations.phase.Phase"):
+        pass

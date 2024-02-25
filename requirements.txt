@@ -1,3 +1,5 @@
-tqdm
-motor
-PyYAML
+tqdm~=4.66.2
+motor~=3.3.2
+PyYAML~=6.0.1
+shapely~=2.0.3
+pymongo~=4.6.2

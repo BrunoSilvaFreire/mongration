@@ -1,10 +1,10 @@
-import asyncio
-import time
-
+import shapely
+import yaml
 from shapely.geometry import shape, mapping
 from shapely.ops import unary_union
+
+from mongrations.misc.documents import deep_set
 from mongrations.mongration import Mongration
-import yaml
 
 
 def read_config(config_path):
@@ -26,12 +26,19 @@ def remove_null_properties(doc: dict):
     new_properties = dict()
     for key in properties:
         value = properties[key]
-        if value is None:
+        if value is not None:
             new_properties[key] = value
     if len(new_properties) == 0:
         doc.pop('properties')
     else:
         doc['properties'] = new_properties
+    return doc
+
+
+def compute_area(doc: dict):
+    geom = shape(doc['geometry'])
+    if geom.is_valid:
+        deep_set(doc, 'properties', 'area', shapely.area(geom))
     return doc
 
 
@@ -48,24 +55,8 @@ def mongration(mongration: Mongration):
     clean_up.from_phase(remote_intersecting_geo_objs)
     clean_up.use_python(remove_null_properties)
 
-    associate_with_address = mongration.phase("Associate GeoJSON with address")
-    associate_with_address.from_phase(clean_up)
-    associate_with_address.use_aggregation(
-        "lots",
-        "geometry",
-        [
-            {
-                "$match": {
-                    "_id": {
-                        "$exists": True
-                    }
-                }
-            },
-            {
-                "$set": {
-                    "IT_WORKS": True
-                }
-            }
-        ]
-    )
-    associate_with_address.into_collection("lots", "geometry")
+
+    append_area = mongration.phase("Append geometry area to properties")
+    append_area.from_phase(clean_up)
+    append_area.use_python(compute_area)
+    append_area.into_collection("lots", "geometry")

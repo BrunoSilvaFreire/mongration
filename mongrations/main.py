@@ -1,6 +1,6 @@
 import argparse
-
-from mongrations.loading import run_mongration
+import sys
+import pathlib
 
 
 def main():
@@ -12,8 +12,12 @@ def main():
 
     # Parse the command line arguments
     args = parser.parse_args()
-
+    path = pathlib.Path(__file__)
+    main_dir = str(path.parent.parent.absolute())
+    if main_dir not in sys.path:
+        sys.path.append(main_dir)
     # Call the mongrate function with the provided mongration script path
+    from mongrations.loading import run_mongration
     run_mongration(args)
 
 
