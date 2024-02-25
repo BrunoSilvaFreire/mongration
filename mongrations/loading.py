@@ -2,7 +2,6 @@ import importlib
 import sys
 from pathlib import Path
 
-from mongrations.engine.asyncio_engine import AsyncIOEngine
 from mongrations.graph import DependencyGraph
 from mongrations.mongration import Mongration
 from mongrations.phase import Phase
@@ -20,23 +19,6 @@ def load_mongration_script(script_path: Path):
     else:
         print(f"No 'mongration' function found in {script_path}.")
         return None
-
-
-def run_mongration(args):
-    mongration_script = args.mongration
-    mongration_path = Path(mongration_script)
-    if not mongration_path.exists() or not mongration_path.is_file():
-        print(f"The specified mongration script does not exist: {mongration_script}")
-        return
-
-    mongration_function = load_mongration_script(mongration_path)
-    if mongration_function:
-        engine = AsyncIOEngine()
-        engine.invoke(lambda: load_mongration(mongration_function))
-
-        print("Mongration process completed successfully.")
-    else:
-        print("Failed to load the mongration function.")
 
 
 def build_dependency_graph(phases: list[Phase]) -> DependencyGraph[Phase]:
@@ -58,8 +40,8 @@ def _build_list(phases):
     return ", ".join([f'"{phase.name()}"' for phase in phases])
 
 
-def load_mongration(mongration_function):
-    mongration_instance = Mongration()
+def load_mongration(name, mongration_function):
+    mongration_instance = Mongration(name)
     mongration_function(mongration_instance)
 
     phases = mongration_instance.phases()
@@ -70,10 +52,4 @@ def load_mongration(mongration_function):
         no_dest_msg = _build_list(phases_without_dest)
         raise Exception(
             f"Some phases are misconfigured. Phases without sources: [{no_source_msg}], Phases without destinations: [{no_dest_msg}].")
-    graph = build_dependency_graph(phases)
-    graph.print_to_terminal(
-        circle_radius=8,
-        padding=10,
-        name_selector=lambda phase: phase.name(),
-    )
-    return mongration_instance, graph
+    return mongration_instance

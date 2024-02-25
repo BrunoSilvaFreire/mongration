@@ -2,7 +2,9 @@ from mongrations.phase import Phase
 
 
 class Mongration:
-    _phases = list[Phase]()
+    def __init__(self, name: str):
+        self.name = name
+        self._phases = list[Phase]()
 
     def phase(self, name):
         ph = Phase(name)

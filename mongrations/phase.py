@@ -4,10 +4,11 @@ from typing import Callable
 from mongrations.io.collection_destination import CollectionDestination
 from mongrations.io.destination import Destination
 from mongrations.io.pipe import Pipe
-from mongrations.io.source import Source, CollectionSource
+from mongrations.io.source import Source, CollectionSource, FileSource
 from mongrations.operations.aggregation_operation import AggregationOperation
+from mongrations.operations.import_operation import ImportOperation
 from mongrations.operations.operation import Operation
-from mongrations.operations.python_operation import PythonOperation
+from mongrations.operations.python_operation import DocumentPythonOperation
 
 
 class Phase:
@@ -69,11 +70,16 @@ class Phase:
         return self._dependencies
 
     def use_python(self, callback):
-        self._operation = PythonOperation(callback)
+        self._operation = DocumentPythonOperation(callback)
         self._attempt_auto_configuration()
 
     def use_aggregation(self, aggregation):
         self._operation = AggregationOperation(aggregation)
+        self._attempt_auto_configuration()
+
+    def import_from(self, file, block, entry_iterator):
+        self._source = FileSource(file)
+        self._operation = ImportOperation(block, entry_iterator)
         self._attempt_auto_configuration()
 
     def _attempt_auto_configuration(self):

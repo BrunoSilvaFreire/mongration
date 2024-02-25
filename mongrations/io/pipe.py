@@ -3,13 +3,14 @@ import asyncio
 from motor.motor_asyncio import AsyncIOMotorClient
 
 from mongrations.io.destination import Destination
-from mongrations.io.source import Source
+from mongrations.io.source import DocumentSource
 
 
-class Pipe(Source, Destination):
+class Pipe(DocumentSource, Destination):
     def __init__(self):
         self._queue = asyncio.Queue()
         self._end_of_pipe = False
+        self._has_been_hinted = False
         self._total_hint = None
 
     async def push(self, item):
@@ -21,7 +22,7 @@ class Pipe(Source, Destination):
         await self._queue.put(None)
 
     async def cursor(self, client: AsyncIOMotorClient):
-        while self._total_hint is None:
+        while self._has_been_hinted:
             await asyncio.sleep(0)
         return self._cursor(), self._total_hint
 
@@ -40,3 +41,4 @@ class Pipe(Source, Destination):
 
     def hint_total(self, estimated_total):
         self._total_hint = estimated_total
+        self._has_been_hinted = True

@@ -6,11 +6,19 @@ from motor.motor_asyncio import AsyncIOMotorClient
 class Source:
     pass
 
+
+class FileSource(Source):
+    def __init__(self, path):
+        self.path = path
+
+
+class DocumentSource(Source):
+
     def cursor(self, client: AsyncIOMotorClient):
         pass
 
 
-class CollectionSource(Source):
+class CollectionSource(DocumentSource):
     def __init__(self, database: str, collection: str, filter: Optional[dict]):
         self.database = database
         self.collection = collection

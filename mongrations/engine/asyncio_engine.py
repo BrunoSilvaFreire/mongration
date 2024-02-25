@@ -9,9 +9,8 @@ from mongrations.phase import Phase
 
 
 class AsyncIOEngine(Engine):
-    async def _main(self, mongration_function):
-        mongration_instance, graph = mongration_function()
-        client = AsyncIOMotorClient("mongodb://root:letmein@localhost:27017")
+
+    async def invoke(self, client, mongration, graph):
 
         async def invoke_operation(phase: Phase, progress: tqdm):
             start = time.time()
@@ -68,13 +67,11 @@ class AsyncIOEngine(Engine):
             await graph[i].finalize(self, client)
 
         client.close()
-
-        return progress_bars
-
-    def invoke(self, mongration_function):
-        progress_bars = asyncio.run(self._main(mongration_function))
         for bar in progress_bars:
             bar.close()
+
+    def start(self, entrypoint):
+        return asyncio.run(entrypoint)
 
     async def wait_all(self, futures: list):
         return await asyncio.gather(*futures)

@@ -1,11 +1,8 @@
-from motor.motor_asyncio import AsyncIOMotorClient
-
-from mongrations.graph import DependencyGraph
-from mongrations.phase import Phase
-
-
 class Engine:
-    def invoke(self, mongration_function):
+    def start(self, entrypoint):
+        pass
+
+    async def invoke(self, client, mongration, graph):
         pass
 
     async def wait_all(self, futures: list):

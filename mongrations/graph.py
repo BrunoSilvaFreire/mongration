@@ -202,7 +202,7 @@ class DependencyGraph(Generic[TVertex]):
                         if neighbor not in ready:
                             ready.appendleft(neighbor)
 
-    def print_to_terminal(self, circle_radius=5, padding=2, name_selector=None):
+    def to_canvas(self, circle_radius=5, padding=2, name_selector=None):
         canvas = BufferedCanvas()
         vertices_to_level = {}
 
@@ -248,11 +248,7 @@ class DependencyGraph(Generic[TVertex]):
                 else:
                     msg = str(vertex)
                 canvas.draw_centered(center, clamp_string(msg, max_msg_len), circle_radius, circle_radius)
-
-        print(canvas)
-
-        with open("mongration.graph.txt", "w") as f:
-            f.writelines(str(canvas))
+        return canvas
 
     def is_completed(self, needed: Set[int], visited: Set[int]) -> bool:
         return needed.issubset(visited)
