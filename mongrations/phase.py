@@ -95,9 +95,6 @@ class Phase:
     def operation(self):
         return self._operation
 
-    def into_temporary(self, database: str):
-        pass
-
     def into_collection(self, database: str, collection: str):
         # TODO: Check if operation is an aggregation, and if is, add an $out stage. A lot fast than python.
         self._destination = CollectionDestination(database, collection)

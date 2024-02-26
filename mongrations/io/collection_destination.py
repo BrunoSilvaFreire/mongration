@@ -1,8 +1,6 @@
-from asyncio import Future
-from queue import Queue
-
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorCollection
-from pymongo import UpdateOne
+from pymongo import UpdateOne, InsertOne
+from queue import Queue
 
 from mongrations.io.destination import Destination
 from mongrations.io.source import CollectionSource
@@ -30,11 +28,18 @@ class CollectionDestination(Destination):
         requests = list()
         while not self.buffer.empty():
             entry = self.buffer.get()
-            requests.append(UpdateOne({
-                "_id": entry["_id"]
-            }, {
-                "$set": entry
-            }, upsert=True))
+            if "_id" in entry:
+                requests.append(
+                    UpdateOne({
+                        "_id": entry["_id"]
+                    }, {
+                        "$set": entry
+                    }
+                        , upsert=True
+                    )
+                )
+            else:
+                requests.append(InsertOne(entry))
         self._cached_collection.bulk_write(requests)
 
     def pipe_into(self, src, dest):

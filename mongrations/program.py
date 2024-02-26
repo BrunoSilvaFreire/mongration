@@ -1,7 +1,6 @@
 import os
-from pathlib import Path
-
 from motor.motor_asyncio import AsyncIOMotorClient
+from pathlib import Path
 
 from mongrations.engine.asyncio_engine import AsyncIOEngine
 from mongrations.loading import load_mongration_script, load_mongration, build_dependency_graph
@@ -63,6 +62,8 @@ class MongrationProgram:
 
         if mongrations_dir is not None:
             for dirpath, dirnames, filenames in os.walk(mongrations_dir):
+                if '__pycache__' in dirpath.split(os.sep):
+                    continue  # Skip this directory
                 for file in filenames:
                     paths.append(Path(os.path.join(dirpath, file)))
 
@@ -71,14 +72,15 @@ class MongrationProgram:
             try:
                 script = load_mongration_script(path)
                 if script is None:
-                    continue
+                    print(f"Unable to load mongration at {path}")
+                    return
                 instance = load_mongration(path.stem, script)
                 mongrations.append(instance)
             except Exception as e:
-                print(e)
-                continue
+                print(f"Expection trying to load mongration {path}: {e}")
+                return
         mongrations.sort(key=lambda mon: mon.name)
-
+        print(f"Total of {len(mongrations)} mongrations.")
         client = AsyncIOMotorClient("mongodb://root:letmein@localhost:27017")
         states = await self._fetch_status(client)
 

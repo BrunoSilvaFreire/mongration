@@ -1,6 +1,4 @@
 import asyncio
-import collections
-
 from motor.motor_asyncio import AsyncIOMotorClient
 from tqdm import tqdm
 
@@ -38,7 +36,9 @@ class AbstractPythonOperation(Operation):
                 increment += 1
         else:
             async for new_doc in iterator:
-                await destination.push(new_doc)
+
+                if new_doc is not None:
+                    await destination.push(new_doc)
                 current_batch = await self._notify_batch(batch_size, current_batch)
                 increment += 1
 

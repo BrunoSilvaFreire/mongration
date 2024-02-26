@@ -1,6 +1,5 @@
-from typing import Optional
-
 from motor.motor_asyncio import AsyncIOMotorClient
+from typing import Optional
 
 
 class Source:
@@ -10,6 +9,9 @@ class Source:
 class FileSource(Source):
     def __init__(self, path):
         self.path = path
+
+    def __str__(self):
+        return f"file://{self.path}"
 
 
 class DocumentSource(Source):

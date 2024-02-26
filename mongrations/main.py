@@ -10,7 +10,7 @@ def main():
 
     # Add the --mongration argument
     parser.add_argument('--mongration', type=str, help='Path to the mongration script to be executed.')
-    parser.add_argument('--mongrations_dir', type=str, help='Path to the mongration directory of scripts to be executed.')
+    parser.add_argument('--mongrations-dir', type=str, help='Path to the mongration directory of scripts to be executed.')
     parser.add_argument('--dry-run', action='store_true')
 
     # Parse the command line arguments
