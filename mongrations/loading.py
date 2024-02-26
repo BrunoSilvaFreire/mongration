@@ -45,8 +45,8 @@ def load_mongration(name, mongration_function):
     mongration_function(mongration_instance)
 
     phases = mongration_instance.phases()
-    phases_without_source = list(filter(lambda phase: phase.source() is None, phases))
-    phases_without_dest = list(filter(lambda phase: phase.destination() is None, phases))
+    phases_without_source = list(filter(lambda phase: phase.operation().needs_source() and phase.source() is None, phases))
+    phases_without_dest = list(filter(lambda phase:  phase.operation().needs_destination() and phase.destination() is None, phases))
     if len(phases_without_source) > 0 or len(phases_without_dest) > 0:
         no_source_msg = _build_list(phases_without_source)
         no_dest_msg = _build_list(phases_without_dest)

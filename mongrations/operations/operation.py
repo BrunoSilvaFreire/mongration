@@ -11,7 +11,13 @@ class Operation:
         return True
 
     def create_default_destination(self, phase):
-        pass
+        raise NotImplemented()
 
     def invoke(self, client: AsyncIOMotorClient, progress: tqdm, phase):
-        raise Exception("Not implemented")
+        raise NotImplemented()
+
+    def needs_source(self):
+        return True
+
+    def needs_destination(self):
+        return True

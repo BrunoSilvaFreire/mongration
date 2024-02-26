@@ -7,6 +7,7 @@ from mongrations.io.pipe import Pipe
 from mongrations.io.source import Source, CollectionSource, FileSource
 from mongrations.operations.aggregation_operation import AggregationOperation
 from mongrations.operations.import_operation import ImportOperation
+from mongrations.operations.index_operation import IndexOperation
 from mongrations.operations.operation import Operation
 from mongrations.operations.python_operation import DocumentPythonOperation
 
@@ -82,6 +83,12 @@ class Phase:
         self._operation = ImportOperation(block, entry_iterator)
         self._attempt_auto_configuration()
 
+    def create_index(self, index, database=None, collection=None):
+        if database is not None and collection is not None:
+            self._source = CollectionSource(database, collection, None)
+        self._operation = IndexOperation(index)
+        self._attempt_auto_configuration()
+
     def _attempt_auto_configuration(self):
         match len(self._needs_configuration):
             case 0:
@@ -115,6 +122,7 @@ class Phase:
         completed_future = Future()
         self.wait_on(completed_future)
         phase.on_completed(lambda: completed_future.set_result(None))
+        self._dependencies.append(phase)
 
     async def prepare(self, engine):
         if len(self._must_wait) == 0:

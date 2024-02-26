@@ -18,7 +18,8 @@ class AsyncIOEngine(Engine):
             if destination is not None:
                 destination.init(client)
             total_processed = await phase.operation().invoke(client, progress, phase)
-            await destination.close()
+            if destination is not None:
+                await destination.close()
 
             end = time.time()
             phase.notify_completion()
@@ -66,7 +67,6 @@ class AsyncIOEngine(Engine):
             progress_bars[i].display("Finalizing...")
             await graph[i].finalize(self, client)
 
-        client.close()
         for bar in progress_bars:
             bar.close()
 

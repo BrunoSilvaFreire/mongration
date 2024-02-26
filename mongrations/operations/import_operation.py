@@ -1,4 +1,5 @@
 from mongrations.io.source import FileSource
+from mongrations.misc.not_supported import NotSupported
 from mongrations.operations.python_operation import AbstractPythonOperation
 
 
@@ -8,7 +9,7 @@ class ImportOperation(AbstractPythonOperation):
         self.entry_iterator = entry_iterator
 
     def accepts_dependency_output(self, phase, destination):
-        raise Exception("Not supported, import operation should not have any phase as it's source.")
+        raise NotSupported("Not supported, import operation should not have any phase as it's source.")
 
     async def _setup(self, client, phase, progress):
         source = phase.source()
