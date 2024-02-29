@@ -1,0 +1,23 @@
+[tool.poetry]
+name = "mongrations"
+version = "0.1.0"
+description = "MongoDB migrations"
+authors = ["Bruno Silva Freire <brunorbsf@gmail.com>"]
+
+[tool.poetry.dependencies]
+python = "^3.6"
+tqdm = "~4.66.2"
+motor = "~3.3.2"
+pymongo = "~4.6.2"
+
+[tool.poetry.dev-dependencies]
+
+[tool.poetry.scripts]
+mongration = "mongrations.main:main"
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry.flit]
+metadata = "pyproject.toml"
