@@ -22,7 +22,7 @@ class AsyncIOEngine(Engine):
                 await destination.close()
 
             end = time.time()
-            phase.notify_completion()
+            await phase.notify_completion(total_processed)
             duration = end - start
             return duration, total_processed
 

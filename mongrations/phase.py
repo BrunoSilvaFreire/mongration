@@ -4,8 +4,9 @@ from typing import Callable
 from mongrations.io.collection_destination import CollectionDestination
 from mongrations.io.destination import Destination
 from mongrations.io.pipe import Pipe
-from mongrations.io.source import Source, CollectionSource, FileSource
+from mongrations.io.source import Source, CollectionSource, FileSource, AggregationSource
 from mongrations.operations.aggregation_operation import AggregationOperation
+from mongrations.operations.export_operation import ExportOperation
 from mongrations.operations.import_operation import ImportOperation
 from mongrations.operations.index_operation import IndexOperation
 from mongrations.operations.operation import Operation
@@ -36,6 +37,9 @@ class Phase:
     def from_collection(self, database: str, collection: str, filter: dict = None):
         self._source = CollectionSource(database, collection, filter)
 
+    def from_aggregation(self, database: str, collection: str, aggregation: list[dict]):
+        self._source = AggregationSource(database, collection, aggregation)
+
     def from_phase(self, source_phase: "Phase"):
         if self == source_phase:
             raise Exception("Cannot read phase from itself")
@@ -61,8 +65,8 @@ class Phase:
     def sanitized_name(self):
         return self._name.replace(' ', '-')
 
-    def on_completed(self, finalizer):
-        self._completionCallbacks.append(finalizer)
+    def on_completed(self, callback):
+        self._completionCallbacks.append(callback)
 
     def finalize_with(self, name, finalizer):
         self._finalizers.append((name, finalizer))
@@ -81,6 +85,10 @@ class Phase:
     def import_from(self, file, block, entry_iterator):
         self._source = FileSource(file)
         self._operation = ImportOperation(block, entry_iterator)
+        self._attempt_auto_configuration()
+
+    def export_to(self, block):
+        self._operation = ExportOperation(block)
         self._attempt_auto_configuration()
 
     def create_index(self, index, database=None, collection=None):
@@ -129,12 +137,14 @@ class Phase:
             return
         await engine.wait_all(self._must_wait)
 
-    def notify_completion(self):
+    async def notify_completion(self, num_docs_iterated):
         if self._isComplete:
             return
         self._isComplete = True
         for callback in self._completionCallbacks:
-            callback()
+            returned = callback(num_docs_iterated)
+            if returned is not None:
+                await returned
 
     async def finalize(self, engine, client):
         to_await = list()

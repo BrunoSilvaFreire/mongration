@@ -25,6 +25,9 @@ class AggregationOperation(Operation):
         )
         return destination
 
+    def needs_destination(self):
+        return False
+
     async def invoke(self, client: AsyncIOMotorClient, progress: tqdm, phase):
         # for dependency in phase.dependencies():
         #     await dependency.complete()
@@ -42,8 +45,7 @@ class AggregationOperation(Operation):
             last_phase: dict = agg[len(agg) - 1]
             if last_phase.get("$out", None) is None:
                 agg.append({
-
-                "$out": {"db": dest.database, "coll":dest.collection}
+                    "$out": {"db": dest.database, "coll": dest.collection}
                 })
 
         # Start the aggregation
@@ -52,11 +54,17 @@ class AggregationOperation(Operation):
         # Initialize progress bar
         # Process documents
         sum = 0
-        async for doc in cursor:
-            progress.update()  # Update progress for each document
-            sum += 1
+        if dest is None:
+            async for _ in cursor:
+                progress.update()  # Update progress for each document
+                sum += 1
+        else:
+            async for doc in cursor:
+                await dest.push(doc)
+                progress.update()  # Update progress for each document
+                sum += 1
 
         return sum
 
     def __str__(self):
-        return "Aggregation"
+        return f"Aggregation({len(self._aggregation)} stages)"

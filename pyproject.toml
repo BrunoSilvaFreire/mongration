@@ -13,7 +13,7 @@ pymongo = "~4.6.2"
 [tool.poetry.dev-dependencies]
 
 [tool.poetry.scripts]
-mongration = "mongrations.main:main"
+mongrate = "mongrations.main:main"
 
 [build-system]
 requires = ["poetry-core>=1.0.0"]

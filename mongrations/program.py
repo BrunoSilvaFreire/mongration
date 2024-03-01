@@ -1,6 +1,7 @@
 import os
-from motor.motor_asyncio import AsyncIOMotorClient
 from pathlib import Path
+
+from motor.motor_asyncio import AsyncIOMotorClient
 
 from mongrations.engine.asyncio_engine import AsyncIOEngine
 from mongrations.loading import load_mongration_script, load_mongration, build_dependency_graph
@@ -9,8 +10,7 @@ from mongrations.plan import MongrationStatus, MongrationState
 
 class MongrationProgram:
 
-    async def _fetch_status(self, client):
-        state_collection = client.get_database("mongrations").get_collection("state")
+    async def _fetch_status(self, state_collection):
         states = list()
 
         async for doc in state_collection.find():
@@ -32,18 +32,23 @@ class MongrationProgram:
             next = states[i + 1]
             if next.status == MongrationStatus.COMPLETED and state.status != MongrationStatus.COMPLETED:
                 print(
-                    f"Mongration {state.name} is not yet completed, but next mongration {next.name} is completed, this should not happen.")
+                    f"Mongration {state.name} is not yet completed, but next mongration {next.name} is completed, this should not happen. Expected migration order is:"
+                )
+                msg = ", ".join([f"#{i}: {state.name} ({state.status})" for i, state in enumerate(states[:-1])])
+                print(msg)
                 return False
         return True
 
-    def list_pending_mongrations(self, states, mongrations):
+    def _list_pending_mongrations(self, states, mongrations):
         # Convert the states list to a dictionary for efficient lookups
         states_dict = {state.name: state for state in states}
         pending_mongrations = []
 
         for mongration in mongrations:
             # Check if the mongration is either not present in the states or is not completed
-            if mongration.name not in states_dict or states_dict[mongration.name].status != MongrationStatus.COMPLETED:
+            is_pending = mongration.name not in states_dict or states_dict[
+                mongration.name].status != MongrationStatus.COMPLETED
+            if mongration.is_stateless() or is_pending:
                 pending_mongrations.append(mongration)
 
         return pending_mongrations
@@ -58,7 +63,7 @@ class MongrationProgram:
             if not mongration_path.exists() or not mongration_path.is_file():
                 print(f"The specified mongration script does not exist: {mongration_script}")
                 return
-            paths.append(paths)
+            paths.append(mongration_path)
 
         if mongrations_dir is not None:
             for dirpath, dirnames, filenames in os.walk(mongrations_dir):
@@ -67,6 +72,7 @@ class MongrationProgram:
                 for file in filenames:
                     paths.append(Path(os.path.join(dirpath, file)))
 
+        client = AsyncIOMotorClient("mongodb://root:letmein@localhost:27017")
         mongrations = []
         for path in paths:
             try:
@@ -74,21 +80,26 @@ class MongrationProgram:
                 if script is None:
                     print(f"Unable to load mongration at {path}")
                     return
-                instance = load_mongration(path.stem, script)
+                mongration_name = load_mongration(path.stem, script)
+                instance = mongration_name
                 mongrations.append(instance)
             except Exception as e:
                 print(f"Expection trying to load mongration {path}: {e}")
                 return
+        stateful_migrations = filter(lambda mongration: not mongration.is_stateless(), mongrations)
+        stateless_migrations = filter(lambda mongration: mongration.is_stateless(), mongrations)
         mongrations.sort(key=lambda mon: mon.name)
         print(f"Total of {len(mongrations)} mongrations.")
-        client = AsyncIOMotorClient("mongodb://root:letmein@localhost:27017")
-        states = await self._fetch_status(client)
 
+        state_collection = client.get_database("mongrations").get_collection("state")
+        states = await self._fetch_status(state_collection)
+        states.sort(key=lambda state: state.index)
+        states_by_name = {state.name: state for state in states}
         if not self._check_database_state_health(states):
             print("Database state is not healthy. Aborting.")
             return
 
-        pending_execution = self.list_pending_mongrations(states, mongrations)
+        pending_execution = self._list_pending_mongrations(states, mongrations)
 
         if len(pending_execution) == 0:
             print("All mongrations are up to date.")
@@ -105,8 +116,13 @@ class MongrationProgram:
             return
 
         os.makedirs("graphs", exist_ok=True)
-        for mongration in mongrations:
+        for index, mongration in enumerate(pending_execution):
             graph = build_dependency_graph(mongration.phases())
+
+            state = states_by_name.get(
+                mongration.name,
+                MongrationState(index, mongration.name, MongrationStatus.ABSENT)
+            )
             print(f"Running mongrations {mongration.name}...")
             canvas = graph.to_canvas(circle_radius=10, padding=5, name_selector=lambda phase: phase.name())
 
@@ -114,4 +130,25 @@ class MongrationProgram:
 
             with open(f"graphs/{mongration.name}.graph.txt", "w") as f:
                 f.writelines(str(canvas))
-            await engine.invoke(client, mongration, graph)
+            if mongration.is_stateful():
+                await state.work_in_progress(state_collection)
+            try:
+                for phase in mongration.phases():
+                    phase.on_completed(
+                        lambda num_docs_iterated: state.notify_phase_completed(
+                            state_collection,
+                            phase,
+                            num_docs_iterated
+                        )
+                    )
+                await engine.invoke(
+                    client,
+                    mongration,
+                    graph,
+                )
+            except Exception as e:
+                if mongration.is_stateful():
+                    await state.failed(state_collection)
+                raise e
+            if mongration.is_stateful():
+                await state.completed(state_collection)
