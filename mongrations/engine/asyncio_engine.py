@@ -41,7 +41,7 @@ class AsyncIOEngine(Engine):
             try:
                 duration, total_docs = await invoke_operation(phase, progress)
             except Exception as e:
-                raise Exception(f"An error occoured while invoking operation on phase {name}") from e
+                raise Exception(f"An error occurred while invoking operation on phase {name}") from e
             progress.set_description(name)
             progress.display(f"Phase {name} took {duration:.2f} seconds and wrote {total_docs} docs")
             progress.update()

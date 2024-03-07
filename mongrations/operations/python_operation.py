@@ -1,4 +1,6 @@
 import asyncio
+from typing import AsyncIterable
+
 from motor.motor_asyncio import AsyncIOMotorClient
 from tqdm import tqdm
 
@@ -19,7 +21,7 @@ class AbstractPythonOperation(Operation):
     def create_default_destination(self, phase):
         return Pipe()
 
-    def _setup(self, client, phase, progress):
+    def _iterate(self, client, phase, progress) -> AsyncIterable:
         raise NotImplemented()
 
     async def invoke(self, client: AsyncIOMotorClient, progress: tqdm, phase):
@@ -29,7 +31,7 @@ class AbstractPythonOperation(Operation):
 
         increment = 0
         current_batch = 0
-        iterator = self._setup(client, phase, progress)
+        iterator = self._iterate(client, phase, progress)
         if destination is None:
             async for _ in iterator:
                 current_batch = await self._notify_batch(batch_size, current_batch)
@@ -59,7 +61,7 @@ class DocumentPythonOperation(AbstractPythonOperation):
     def __init__(self, block):
         super().__init__(block)
 
-    async def _setup(self, client, phase, progress):
+    async def _iterate(self, client, phase, progress):
         source = phase.source()
         destination = phase.destination()
         cursor, estimated_total = await source.cursor(client)

@@ -3,9 +3,11 @@ from typing import Callable
 
 from mongrations.io.collection_destination import CollectionDestination
 from mongrations.io.destination import Destination
+from mongrations.io.file_destination import FileDestination
 from mongrations.io.pipe import Pipe
 from mongrations.io.source import Source, CollectionSource, FileSource, AggregationSource
 from mongrations.operations.aggregation_operation import AggregationOperation
+from mongrations.operations.cursor_operation import StreamingAggregationOperation
 from mongrations.operations.export_operation import ExportOperation
 from mongrations.operations.import_operation import ImportOperation
 from mongrations.operations.index_operation import IndexOperation
@@ -37,8 +39,8 @@ class Phase:
     def from_collection(self, database: str, collection: str, filter: dict = None):
         self._source = CollectionSource(database, collection, filter)
 
-    def from_aggregation(self, database: str, collection: str, aggregation: list[dict]):
-        self._source = AggregationSource(database, collection, aggregation)
+    def from_aggregation(self, database: str, collection: str, aggregation: list[dict], options: dict = None):
+        self._source = AggregationSource(database, collection, aggregation, options)
 
     def from_phase(self, source_phase: "Phase"):
         if self == source_phase:
@@ -78,8 +80,12 @@ class Phase:
         self._operation = DocumentPythonOperation(callback)
         self._attempt_auto_configuration()
 
-    def use_aggregation(self, aggregation):
-        self._operation = AggregationOperation(aggregation)
+    def use_aggregation(self, aggregation, options=None):
+        self._operation = AggregationOperation(aggregation, options)
+        self._attempt_auto_configuration()
+
+    def use_stream(self, sub_aggregation, batch_size=4096):
+        self._operation = StreamingAggregationOperation(sub_aggregation, batch_size)
         self._attempt_auto_configuration()
 
     def import_from(self, file, block, entry_iterator):
@@ -113,6 +119,9 @@ class Phase:
     def into_collection(self, database: str, collection: str):
         # TODO: Check if operation is an aggregation, and if is, add an $out stage. A lot fast than python.
         self._destination = CollectionDestination(database, collection)
+
+    def into_file(self, file_path: str, mode: str = 'w', encoding: str = 'utf-8', batch_size: int = 128):
+        self._destination = FileDestination(file_path, mode, encoding, batch_size)
 
     def __str__(self):
         return f"Phase(name={self._name})"

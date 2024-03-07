@@ -8,7 +8,7 @@ class ExportOperation(AbstractPythonOperation):
     def needs_destination(self):
         return False
 
-    async def _setup(self, client, phase, progress):
+    async def _iterate(self, client, phase, progress):
         source = phase.source()
         cursor, estimated_total = await source.cursor(client)
         progress.total = estimated_total

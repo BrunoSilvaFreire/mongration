@@ -1,4 +1,5 @@
 import os
+import traceback
 from pathlib import Path
 
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -56,7 +57,6 @@ class MongrationProgram:
     async def _main(self, args, engine):
         mongration_script = args.mongration
         mongrations_dir = args.mongrations_dir
-
         paths = []
         if mongration_script is not None:
             mongration_path = Path(mongration_script)
@@ -72,7 +72,6 @@ class MongrationProgram:
                 for file in filenames:
                     paths.append(Path(os.path.join(dirpath, file)))
 
-        client = AsyncIOMotorClient("mongodb://root:letmein@localhost:27017")
         mongrations = []
         for path in paths:
             try:
@@ -84,16 +83,22 @@ class MongrationProgram:
                 instance = mongration_name
                 mongrations.append(instance)
             except Exception as e:
-                print(f"Expection trying to load mongration {path}: {e}")
-                return
-        stateful_migrations = filter(lambda mongration: not mongration.is_stateless(), mongrations)
-        stateless_migrations = filter(lambda mongration: mongration.is_stateless(), mongrations)
+                new_exception = Exception(f"Caught an exception while trying to load mongration {path}")
+                new_exception.__cause__ = e
+                traceback.print_exception(new_exception)  # This prints the stack trace of the exception `e`
+
         mongrations.sort(key=lambda mon: mon.name)
         print(f"Total of {len(mongrations)} mongrations.")
-
+        if len(mongrations) == 0:
+            return
+        print(f"Connecting to mongodb...")
+        client = AsyncIOMotorClient("mongodb://root:letmein@localhost:27017")
+        print(f"Connected!")
         state_collection = client.get_database("mongrations").get_collection("state")
+
         states = await self._fetch_status(state_collection)
         states.sort(key=lambda state: state.index)
+
         states_by_name = {state.name: state for state in states}
         if not self._check_database_state_health(states):
             print("Database state is not healthy. Aborting.")
@@ -116,19 +121,23 @@ class MongrationProgram:
             return
 
         os.makedirs("graphs", exist_ok=True)
-        for index, mongration in enumerate(pending_execution):
+        for mongration in pending_execution:
+            name = mongration.name
+            index = states_by_name.get(name, None)
+            if index is None:
+                index = len(states)
             graph = build_dependency_graph(mongration.phases())
 
             state = states_by_name.get(
-                mongration.name,
-                MongrationState(index, mongration.name, MongrationStatus.ABSENT)
+                name,
+                MongrationState(index, name, MongrationStatus.ABSENT)
             )
-            print(f"Running mongrations {mongration.name}...")
+            print(f"Running mongrations {name}...")
             canvas = graph.to_canvas(circle_radius=10, padding=5, name_selector=lambda phase: phase.name())
 
             print(canvas)
 
-            with open(f"graphs/{mongration.name}.graph.txt", "w") as f:
+            with open(f"graphs/{name}.graph.txt", "w") as f:
                 f.writelines(str(canvas))
             if mongration.is_stateful():
                 await state.work_in_progress(state_collection)

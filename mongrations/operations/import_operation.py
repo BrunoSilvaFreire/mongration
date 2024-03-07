@@ -11,7 +11,7 @@ class ImportOperation(AbstractPythonOperation):
     def accepts_dependency_output(self, phase, destination):
         raise NotSupported("Not supported, import operation should not have any phase as it's source.")
 
-    async def _setup(self, client, phase, progress):
+    async def _iterate(self, client, phase, progress):
         source = phase.source()
         destination = phase.destination()
         if not isinstance(source, FileSource):

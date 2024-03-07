@@ -1,4 +1,5 @@
 from typing import Optional
+
 from motor.motor_asyncio import AsyncIOMotorClient
 
 
@@ -35,14 +36,15 @@ class CollectionSource(DocumentSource):
 
 
 class AggregationSource(DocumentSource):
-    def __init__(self, database: str, collection: str, pipeline: list[dict]):
+    def __init__(self, database: str, collection: str, pipeline: list[dict], options: Optional[dict] = None):
         self.database = database
         self.collection = collection
         self.pipeline = pipeline
+        self.options = options
 
     async def cursor(self, client: AsyncIOMotorClient):
         collection = client.get_database(self.database).get_collection(self.collection)
-        cursor = collection.aggregate(self.pipeline)
+        cursor = collection.aggregate(self.pipeline, **(self.options or {}))
         return cursor, await collection.estimated_document_count(maxTimeMS=2 * 1000)
 
     def __str__(self):

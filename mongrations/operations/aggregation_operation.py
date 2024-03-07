@@ -9,9 +9,10 @@ from mongrations.operations.operation import Operation
 
 
 class AggregationOperation(Operation):
-    def __init__(self, aggregation: list[dict[str, Any]]):
+    def __init__(self, aggregation: list[dict[str, Any]], options: dict[str, Any] = None):
         super().__init__()
         self._aggregation = aggregation
+        self._options = options
 
     def accepts_dependency_output(self, phase, destination):
         return isinstance(destination, CollectionDestination)
@@ -48,11 +49,8 @@ class AggregationOperation(Operation):
                     "$out": {"db": dest.database, "coll": dest.collection}
                 })
 
-        # Start the aggregation
         cursor = collection.aggregate(agg)
 
-        # Initialize progress bar
-        # Process documents
         sum = 0
         if dest is None:
             async for _ in cursor:

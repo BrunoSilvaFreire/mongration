@@ -45,6 +45,9 @@ def load_mongration(name, mongration_function):
     mongration_function(mongration_instance)
 
     phases = mongration_instance.phases()
+    for phase in phases:
+        if phase.operation() is None:
+            raise Exception(f"Phase {phase.name()} has no operation set.")
     phases_without_source = list(filter(lambda phase: phase.operation().needs_source() and phase.source() is None, phases))
     phases_without_dest = list(filter(lambda phase:  phase.operation().needs_destination() and phase.destination() is None, phases))
     if len(phases_without_source) > 0 or len(phases_without_dest) > 0:
