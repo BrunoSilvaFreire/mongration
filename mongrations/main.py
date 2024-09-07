@@ -9,6 +9,7 @@ def main():
     parser = argparse.ArgumentParser(description='Mongrate: A tool for managing database migrations.')
 
     # Add the --mongration argument
+    parser.add_argument('--url', type=str, help='URL to use to connect to the URL.')
     parser.add_argument('--mongration', type=str, help='Path to the mongration script to be executed.')
     parser.add_argument('--mongrations-dir', type=str, help='Path to the mongration directory of scripts to be executed.')
     parser.add_argument('--dry-run', action='store_true')

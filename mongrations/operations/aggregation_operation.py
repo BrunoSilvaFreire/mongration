@@ -1,5 +1,6 @@
 from typing import Any
 
+from mongrations.misc.collections import get_last_or_null
 from motor.motor_asyncio import AsyncIOMotorClient
 from tqdm import tqdm
 
@@ -18,7 +19,7 @@ class AggregationOperation(Operation):
         return isinstance(destination, CollectionDestination)
 
     def create_default_destination(self, phase):
-        col_name = f"mongration-tmp-{phase.sanitized_name()}"
+        col_name = f"mongration-tmp-{phase.sanitized_name()}".replace(".", "-")
         destination = CollectionDestination("mongrations", col_name)
         phase.finalize_with(
             f"Delete temporary {col_name} collection",
@@ -43,8 +44,8 @@ class AggregationOperation(Operation):
         collection = client.get_database(database).get_collection(collection)
         agg = self._aggregation
         if isinstance(dest, CollectionDestination):
-            last_phase: dict = agg[len(agg) - 1]
-            if last_phase.get("$out", None) is None:
+            last_phase: dict = get_last_or_null(agg)
+            if last_phase is None or last_phase.get("$out", None) is None:
                 agg.append({
                     "$out": {"db": dest.database, "coll": dest.collection}
                 })

@@ -1,5 +1,5 @@
 from asyncio import Future
-from typing import Callable
+from typing import Callable, Optional
 
 from mongrations.io.collection_destination import CollectionDestination
 from mongrations.io.destination import Destination
@@ -52,14 +52,25 @@ class Phase:
             self._needs_configuration.append(source_phase)
 
     def _configure_dependency(self, source_phase):
-        if self._operation is None:
-            raise Exception(
-                f"Phase {self._name} doesn't have an operation set, cannot create default destination from {source_phase._name}")
         dest = source_phase.destination()
-        if dest is None or not self._operation.accepts_dependency_output(source_phase, dest):
-            dest = self._operation.create_default_destination(source_phase)
-        source_phase._destination = dest
-        dest.pipe_into(source_phase, self)
+
+        if self._operation is None:
+            self.use_aggregation([])
+
+        # Configure destination from operation
+        if self._operation != None:
+            if dest is not None:
+                compatible = self._operation.accepts_dependency_output(source_phase, dest)
+                if not compatible:
+                    raise Exception(f"Operation {self._operation} on phase {self.sanitized_name()} is not compatible with destination {dest}")
+            else:
+                dest = self._operation.create_default_destination(source_phase)
+                if dest is None:
+                    raise Exception(f"Phase {self._name} cannot create a default destination from {source_phase._name}.")
+
+        if dest is not None:
+            source_phase._destination = dest
+            dest.pipe_into(source_phase, self)
 
     def name(self):
         return self._name
@@ -84,8 +95,14 @@ class Phase:
         self._operation = AggregationOperation(aggregation, options)
         self._attempt_auto_configuration()
 
-    def use_stream(self, sub_aggregation, batch_size=4096):
-        self._operation = StreamingAggregationOperation(sub_aggregation, batch_size)
+    def use_stream(
+        self,
+        sub_aggregation,
+        batch_size=4096,
+        database: Optional[str] = None, 
+        collection: Optional[str] = None,
+    ):
+        self._operation = StreamingAggregationOperation(sub_aggregation, batch_size, database, collection)
         self._attempt_auto_configuration()
 
     def import_from(self, file, block, entry_iterator):
@@ -109,6 +126,7 @@ class Phase:
                 return
             case 1:
                 self._configure_dependency(self._needs_configuration[0])
+                self._needs_configuration.clear()
             case _:
                 print(f"Unable to auto-configure phase {self.name()} because it has multiple dependencies.")
                 return
@@ -119,6 +137,7 @@ class Phase:
     def into_collection(self, database: str, collection: str):
         # TODO: Check if operation is an aggregation, and if is, add an $out stage. A lot fast than python.
         self._destination = CollectionDestination(database, collection)
+        self._attempt_auto_configuration()
 
     def into_file(self, file_path: str, mode: str = 'w', encoding: str = 'utf-8', batch_size: int = 128):
         self._destination = FileDestination(file_path, mode, encoding, batch_size)
@@ -138,7 +157,7 @@ class Phase:
     def wait_for_phase(self, phase):
         completed_future = Future()
         self.wait_on(completed_future)
-        phase.on_completed(lambda: completed_future.set_result(None))
+        phase.on_completed(lambda _: completed_future.set_result(None))
         self._dependencies.append(phase)
 
     async def prepare(self, engine):

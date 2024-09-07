@@ -18,8 +18,9 @@ class MongrationProgram:
             states.append(MongrationState(
                 index=doc["_id"],
                 name=doc['name'],
-                status=MongrationStatus.by_name(doc['status'])
-            ))
+                status=MongrationStatus.by_name(doc.get("status", "ABSENT"))
+                )
+            )
         states.sort(key=lambda state: state.index, reverse=True)
         return states
 
@@ -55,6 +56,7 @@ class MongrationProgram:
         return pending_mongrations
 
     async def _main(self, args, engine):
+        url = args.url
         mongration_script = args.mongration
         mongrations_dir = args.mongrations_dir
         paths = []
@@ -92,7 +94,7 @@ class MongrationProgram:
         if len(mongrations) == 0:
             return
         print(f"Connecting to mongodb...")
-        client = AsyncIOMotorClient("mongodb://root:letmein@localhost:27017")
+        client = AsyncIOMotorClient(url)
         print(f"Connected!")
         state_collection = client.get_database("mongrations").get_collection("state")
 
@@ -143,6 +145,7 @@ class MongrationProgram:
                 await state.work_in_progress(state_collection)
             try:
                 for phase in mongration.phases():
+                    current_phase = phase
                     phase.on_completed(
                         lambda num_docs_iterated: state.notify_phase_completed(
                             state_collection,
@@ -158,6 +161,7 @@ class MongrationProgram:
             except Exception as e:
                 if mongration.is_stateful():
                     await state.failed(state_collection)
-                raise e
+                raise Exception(f"An exception occoured while running mongration {mongration.name}, phase {current_phase.name()}") from e
+                
             if mongration.is_stateful():
                 await state.completed(state_collection)

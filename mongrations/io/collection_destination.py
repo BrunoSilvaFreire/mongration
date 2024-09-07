@@ -9,7 +9,9 @@ from mongrations.io.source import CollectionSource
 class CollectionDestination(Destination):
     _cached_collection: AsyncIOMotorCollection
 
-    def __init__(self, database, collection, batch_size=128):
+    def __init__(self, database: str, collection: str, batch_size=128):
+        if collection.startswith(".") or collection.endswith("."):
+            raise Exception("Collection name cannot start or end with '.'")
         self._cached_collection = None
         self.database = database
         self.collection = collection

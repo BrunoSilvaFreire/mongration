@@ -53,6 +53,9 @@ class MongrationState:
             {
                 "$addToSet": {
                     "phases_ran": phase_meta
+                },
+                "$set": {
+                    "name": self.name,
                 }
             },
             upsert=True
