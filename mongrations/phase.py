@@ -13,6 +13,7 @@ from mongrations.operations.import_operation import ImportOperation
 from mongrations.operations.index_operation import IndexOperation
 from mongrations.operations.operation import Operation
 from mongrations.operations.python_operation import DocumentPythonOperation
+from mongrations.operations.rename_collection_operation import RenameCollectionOperation
 
 
 class Phase:
@@ -135,7 +136,6 @@ class Phase:
         return self._operation
 
     def into_collection(self, database: str, collection: str):
-        # TODO: Check if operation is an aggregation, and if is, add an $out stage. A lot fast than python.
         self._destination = CollectionDestination(database, collection)
         self._attempt_auto_configuration()
 
@@ -182,7 +182,9 @@ class Phase:
                 to_await.append(returned)
         if len(to_await) > 0:
             await engine.wait_all(to_await)
-
+    
+    def rename_collection(self, new_name: str):
+        self._operation = RenameCollectionOperation(new_name)
 
 def _ensure_phase_writes_to_collection(collection, database, phase: Phase):
     writer: Destination = phase.destination()

@@ -40,7 +40,7 @@ def _build_list(phases):
     return ", ".join([f'"{phase.name()}"' for phase in phases])
 
 
-def load_mongration(name, mongration_function):
+def load_mongration_from_script(name, mongration_function):
     mongration_instance = Mongration(name)
     mongration_function(mongration_instance)
 

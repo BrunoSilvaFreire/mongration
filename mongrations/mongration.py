@@ -1,3 +1,4 @@
+from mongrations.io.source import CollectionSource
 from mongrations.phase import Phase
 
 
@@ -24,11 +25,18 @@ class Mongration:
     def mark_stateless(self):
         self._stateless = True
 
-    def convert_to_uuid_phase(self, database: str, collection: str, field: str = "_id", keep_legacy: bool = True):
-        phase = self.phase(f"Convert {field} to UUID")
-        phase.from_collection(database, collection)
+    def convert_to_uuid_phase(
+        self, 
+        database: str, 
+        collection: str, 
+        field: str = "_id", 
+        keep_legacy: bool = False,
+        convertion_batch_size=256
+    ):
+        convert_phase = self.phase(f"Convert {database}.{collection} field {field} to UUID")
+        convert_phase.from_collection(database, collection)
         tmp_collection_name = f"tmp-{collection}-uuid-conversion-{field}"
-        phase.use_aggregation([
+        convert_phase.use_aggregation([
             {
                 "$match": {
                     field: {
@@ -40,37 +48,54 @@ class Mongration:
             },
             {
                 "$set": {
-                    field: {
+                    "_id": {
                         "$function": {
-                            "body": "function (id) { return UUID(id); }",
+                            "body": """
+                            function (id) { 
+                              try {
+                                return UUID(id);
+                              } catch (exception)  {
+                                print("Exception caught with _id: " + id + " - Error: " + e.message);
+                              }
+                            }
+                            """,
                             "args": [f"${field}"],
                             "lang": "js"
                         }
                     }
                 }
             },
+        ]
+        )
+        convert_phase.into_collection("mongrations", tmp_collection_name)
+        copy_phase = self.phase(f"Copy existing {database}.{collection} fields {field} of type UUID")
+        copy_phase.from_collection(database, collection)
+        copy_phase.use_aggregation(
+            [
             {
-                "$out": {
-                    "into": tmp_collection_name,
-                    "whenMatched": "replace",
-                    "whenNotMatched": "insert"
+                "$match": {
+                    field: {
+                        "$type": "binData"
+                    }
                 }
-            }
-        ])
-        mid_phase: Phase
-        if keep_legacy:
-            mid_phase = self.phase("Move legacy collection")
-            mid_phase.wait_for_phase(phase)
-            mid_phase.from_collection(database, collection)
-            mid_phase.rename_collection(f"{collection}__legacy")
-        else:
-            mid_phase = self.phase("Move legacy collection")
-            mid_phase.wait_for_phase(phase)
-            mid_phase.from_collection(database, collection)
-            mid_phase.rename_collection(f"{collection}__legacy")
-        effetuate_new_collection = self.phase("Rename collections")
-        effetuate_new_collection.wait_for_phase(move_legacy_collection)
-        move_legacy_collection.from_collection(database, tmp_collection_name)
-        effetuate_new_collection.rename_collection(collection)
+            },
+        ]
+        )
+        copy_phase.into_collection("mongrations", tmp_collection_name)
+        overwrite_phase = self.phase("Overwrite collection")
+        overwrite_phase.wait_for_phase(convert_phase)
+        overwrite_phase.wait_for_phase(copy_phase)
+        overwrite_phase.from_collection("mongrations", tmp_collection_name)
 
-        return phase
+        if keep_legacy:
+            rename_old_collection = self.phase("Rename old collection")
+            rename_old_collection.wait_for_phase(convert_phase)
+            rename_old_collection.wait_for_phase(copy_phase)
+            rename_old_collection.from_collection(database, collection)
+            rename_old_collection.rename_collection(f"{collection}__pre_uuid_conversion")
+            overwrite_phase.wait_for_phase(rename_old_collection)
+        overwrite_phase.use_aggregation(
+            []
+        )
+        overwrite_phase.into_collection(database, f"{collection}_new")
+        return convert_phase

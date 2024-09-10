@@ -6,12 +6,11 @@ from tqdm import tqdm
 from mongrations.io.source import CollectionSource
 from mongrations.operations.operation import Operation
 
-
 class StreamingAggregationOperation(Operation):
     def __init__(
             self, 
             aggregation: list[dict], 
-            batch_size, 
+            batch_size,
             database: Optional[str] = None, 
             collection: Optional[str] = None,
         ):
