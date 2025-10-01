@@ -1,3 +1,4 @@
+import logging
 from typing import Any
 
 from mongrations.misc.collections import get_last_or_null
@@ -7,6 +8,8 @@ from tqdm import tqdm
 from mongrations.io.collection_destination import CollectionDestination
 from mongrations.io.source import CollectionSource
 from mongrations.operations.operation import Operation
+
+logger = logging.getLogger(__name__)
 
 
 class AggregationOperation(Operation):
@@ -38,7 +41,9 @@ class AggregationOperation(Operation):
         if isinstance(src, CollectionSource):
             database = src.database
             collection = src.collection
+            logger.debug(f"Running aggregation on {database}.{collection} with {len(self._aggregation)} stages")
         else:
+            logger.error(f"Incompatible source for aggregation: {src}. Expected CollectionSource")
             raise Exception(f"Incompatible source for aggregation: {src}. Expected CollectionSource.")
         # Assuming `source.collection_name` gives the name of the source collection
         collection = client.get_database(database).get_collection(collection)
@@ -63,7 +68,10 @@ class AggregationOperation(Operation):
                 progress.update()  # Update progress for each document
                 sum += 1
 
+        logger.debug(f"Aggregation completed, processed {sum} documents")
         return sum
 
     def __str__(self):
-        return f"Aggregation({len(self._aggregation)} stages)"
+        stage_count = len(self._aggregation)
+        stage_word = "stage" if stage_count == 1 else "stages"
+        return f"Aggregation ({stage_count} {stage_word})"

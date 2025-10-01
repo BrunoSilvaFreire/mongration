@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import time
 
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -7,40 +8,51 @@ from tqdm import tqdm
 from mongrations.engine.engine import Engine
 from mongrations.phase import Phase
 
+logger = logging.getLogger(__name__)
+
 
 class AsyncIOEngine(Engine):
 
     async def invoke(self, client, mongration, graph):
+        logger.info(f"Starting engine invocation for mongration: {mongration.name}")
 
         async def invoke_operation(phase: Phase, progress: tqdm):
+            logger.debug(f"Invoking operation for phase: {phase.name()}")
             start = time.time()
             destination = phase.destination()
             if destination is not None:
+                logger.debug(f"Initializing destination for phase {phase.name()}: {destination}")
                 destination.init(client)
             total_processed = await phase.operation().invoke(client, progress, phase)
             if destination is not None:
+                logger.debug(f"Closing destination for phase {phase.name()}")
                 await destination.close()
 
             end = time.time()
             await phase.notify_completion(total_processed)
             duration = end - start
+            logger.info(f"Phase '{phase.name()}' completed in {duration:.2f}s, processed {total_processed} documents")
             return duration, total_processed
 
         async def phase_process(phase, progress):
             operation = phase.operation()
             name = phase.name()
             if operation is None:
+                logger.error(f"Phase {name} has no operation")
                 raise Exception(f"Phase {name} has no operation.")
 
             source = phase.source()
+            logger.debug(f"Preparing phase {name} (op: {operation}, src: {source}, dst: {phase.destination()})")
             progress.set_description(
                 f"{name} (op: {operation}, src: {source}, dst: {phase.destination()}): Preparing...")
             await phase.prepare(self)
+            logger.debug(f"Running phase {name}")
             progress.set_description(f"{name} (op: {operation}, src: {source}, dst: {phase.destination()}): Running")
 
             try:
                 duration, total_docs = await invoke_operation(phase, progress)
             except Exception as e:
+                logger.exception(f"An error occurred while invoking operation on phase {name}")
                 raise Exception(f"An error occurred while invoking operation on phase {name}") from e
             progress.set_description(name)
             progress.display(f"Phase {name} took {duration:.2f} seconds and wrote {total_docs} docs")
@@ -61,14 +73,19 @@ class AsyncIOEngine(Engine):
             pass
 
         graph.traverse(per_vertex, per_edge)
+        logger.debug(f"Executing {len(operations)} phase operations concurrently")
         await asyncio.gather(*operations)
 
+        logger.debug("Finalizing phases...")
         for i in range(graph.get_size()):
+            phase_name = graph[i].name()
+            logger.debug(f"Finalizing phase: {phase_name}")
             progress_bars[i].display("Finalizing...")
             await graph[i].finalize(self, client)
 
         for bar in progress_bars:
             bar.close()
+        logger.info(f"Engine invocation completed for mongration: {mongration.name}")
 
     def start(self, entrypoint):
         return asyncio.run(entrypoint)

@@ -1,6 +1,9 @@
+import logging
 from typing import Optional
 
 from motor.motor_asyncio import AsyncIOMotorClient
+
+logger = logging.getLogger(__name__)
 
 
 class Source:
@@ -28,8 +31,11 @@ class CollectionSource(DocumentSource):
         self._filter = query_filter
 
     async def cursor(self, client: AsyncIOMotorClient):
+        logger.debug(f"Creating cursor for collection source: {self.database}.{self.collection}")
         collection = client.get_database(self.database).get_collection(self.collection)
-        return collection.find(filter=self._filter), await collection.estimated_document_count(maxTimeMS=2 * 1000)
+        estimated = await collection.estimated_document_count(maxTimeMS=2 * 1000)
+        logger.debug(f"Estimated document count for {self.database}.{self.collection}: {estimated}")
+        return collection.find(filter=self._filter), estimated
 
     def __str__(self):
         return f"{self.database}/{self.collection}"
@@ -43,9 +49,12 @@ class AggregationSource(DocumentSource):
         self.options = options
 
     async def cursor(self, client: AsyncIOMotorClient):
+        logger.debug(f"Creating aggregation cursor for {self.database}.{self.collection} with {len(self.pipeline)} stages")
         collection = client.get_database(self.database).get_collection(self.collection)
         cursor = collection.aggregate(self.pipeline, **(self.options or {}))
-        return cursor, await collection.estimated_document_count(maxTimeMS=2 * 1000)
+        estimated = await collection.estimated_document_count(maxTimeMS=2 * 1000)
+        logger.debug(f"Estimated document count for {self.database}.{self.collection}: {estimated}")
+        return cursor, estimated
 
     def __str__(self):
         return f"{self.database}/{self.collection}"

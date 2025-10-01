@@ -1,0 +1,178 @@
+version: '3'
+
+# Mongrations Taskfile
+# Task runner for development and testing
+
+vars:
+  VENV_DIR: "{{.TASKFILE_DIR}}/.venv"
+  PYTHON: "{{.VENV_DIR}}/bin/python"
+  POETRY: "{{.VENV_DIR}}/bin/poetry"
+  BEHAVE: "{{.VENV_DIR}}/bin/behave"
+
+env:
+  PYTHONPATH: "{{.TASKFILE_DIR}}"
+
+tasks:
+  setup:
+    desc: Set up virtual environment and install all dependencies
+    cmds:
+    - echo "Setting up virtual environment..."
+    - python3 -m venv {{.VENV_DIR}}
+    - echo "Installing Poetry in virtual environment..."
+    - "{{.PYTHON}} -m pip install --upgrade pip"
+    - "{{.PYTHON}} -m pip install poetry"
+    - echo "Configuring Poetry to use virtual environment..."
+    - "{{.POETRY}} config virtualenvs.create false"
+    - echo "Installing project dependencies and package..."
+    - "{{.POETRY}} install --no-root"
+    - "{{.PYTHON}} -m pip install -e ."
+    - echo "✓ Setup complete! Virtual environment is ready at {{.VENV_DIR}}"
+    sources:
+    - pyproject.toml
+    - poetry.lock
+    generates:
+    - "{{.VENV_DIR}}/bin/python"
+    - "{{.VENV_DIR}}/bin/poetry"
+    - "{{.VENV_DIR}}/bin/behave"
+    method: checksum
+
+  test:
+    desc: Run all functional tests with automatic MongoDB management
+    deps:
+    - setup
+    dir: tests
+    cmds:
+    - echo "Running functional tests with automatic MongoDB management..."
+    - echo "MongoDB will start automatically via MongoDBFixture"
+    - "{{.BEHAVE}}"
+    env:
+      PYTHONPATH: "{{.TASKFILE_DIR}}"
+
+  test:verbose:
+    desc: Run tests with verbose output
+    deps:
+    - setup
+    dir: tests
+    cmds:
+    - echo "Running functional tests (verbose) with automatic MongoDB management..."
+    - "{{.BEHAVE}} -v"
+    env:
+      PYTHONPATH: "{{.TASKFILE_DIR}}"
+
+  test:smoke:
+    desc: Run smoke tests only
+    deps:
+    - setup
+    dir: tests
+    cmds:
+    - echo "Running smoke tests..."
+    - "{{.BEHAVE}} --tags @smoke"
+    env:
+      PYTHONPATH: "{{.TASKFILE_DIR}}"
+
+  test:debug:
+    desc: Run tests with debugpy for VS Code debugging
+    deps:
+    - setup
+    dir: tests
+    cmds:
+    - echo "Starting tests with debugpy (waiting for debugger on port 5678)..."
+    - "{{.PYTHON}} -m debugpy --listen 0.0.0.0:5678 --wait-for-client -m behave {{.CLI_ARGS}}"
+    env:
+      PYTHONPATH: "{{.TASKFILE_DIR}}"
+
+  clean:
+    desc: Clean test artifacts, build files, and stop MongoDB container
+    dir: tests
+    cmds:
+    - echo "Cleaning test artifacts..."
+    - docker compose down || true
+    - rm -rf reports/
+    - rm -rf __pycache__/
+    - rm -rf features/__pycache__/
+    - rm -rf features/steps/__pycache__/
+    - cd .. && find . -name "*.pyc" -delete
+    - cd .. && find . -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
+    - cd .. && rm -rf build/ dist/ *.egg-info
+    - echo "✓ Cleanup complete"
+
+  clean:all:
+    desc: Clean everything including virtual environment
+    cmds:
+    - task: clean
+    - echo "Removing virtual environment..."
+    - rm -rf {{.VENV_DIR}}
+    - echo "✓ Full cleanup complete"
+
+  mongodb:up:
+    desc: Start MongoDB test container manually
+    dir: tests
+    cmds:
+    - echo "Starting MongoDB test container..."
+    - docker compose up -d
+    - echo "Waiting for MongoDB to be ready..."
+    - sleep 5
+    - echo "✓ MongoDB is ready"
+
+  mongodb:down:
+    desc: Stop MongoDB test container
+    dir: tests
+    cmds:
+    - echo "Stopping MongoDB test container..."
+    - docker compose down
+    - echo "✓ MongoDB stopped"
+
+  lint:
+    desc: Run code quality checks
+    deps:
+    - setup
+    dir: tests
+    cmds:
+    - echo "Running code quality checks..."
+    - "{{.POETRY}} run flake8 . --max-line-length=120 --ignore=E501,W503 || echo 'flake8 not installed'"
+    - "{{.POETRY}} run black --check . || echo 'black not installed'"
+    - "{{.POETRY}} run isort --check-only . || echo 'isort not installed'"
+
+  coverage:
+    desc: Generate test coverage report
+    deps:
+    - setup
+    - mongodb:up
+    dir: tests
+    cmds:
+    - echo "Generating test coverage report..."
+    - "{{.POETRY}} run coverage run -m behave"
+    - "{{.POETRY}} run coverage report"
+    - "{{.POETRY}} run coverage html"
+    - task: mongodb:down
+    env:
+      PYTHONPATH: "{{.TASKFILE_DIR}}"
+
+  install:
+    desc: Install mongrations CLI tool
+    deps:
+    - setup
+    cmds:
+    - echo "Installing mongrations CLI..."
+    - "{{.POETRY}} install"
+    - echo "✓ mongrations CLI installed. Use 'mongrate' command."
+
+  run:
+    desc: Run mongrate CLI tool
+    deps:
+    - setup
+    cmds:
+    - "{{.POETRY}} run mongrate {{.CLI_ARGS}}"
+
+  shell:
+    desc: Activate the virtual environment in a new shell
+    deps:
+    - setup
+    cmds:
+    - echo "Activating virtual environment..."
+    - echo "Run 'source {{.VENV_DIR}}/bin/activate' to activate in your current shell"
+
+  default:
+    desc: Show available tasks
+    cmds:
+    - task --list

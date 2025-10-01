@@ -17,3 +17,7 @@ class ExportOperation(AbstractPythonOperation):
             await self._block(doc)
             yield None
             progress.update()
+
+    def __str__(self):
+        block_name = getattr(self._block, '__name__', 'export')
+        return f"Export ({block_name})"

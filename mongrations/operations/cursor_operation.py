@@ -1,3 +1,4 @@
+import logging
 from typing import Optional
 from mongrations.io.collection_destination import CollectionDestination
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -5,6 +6,8 @@ from tqdm import tqdm
 
 from mongrations.io.source import CollectionSource
 from mongrations.operations.operation import Operation
+
+logger = logging.getLogger(__name__)
 
 class StreamingAggregationOperation(Operation):
     def __init__(
@@ -39,10 +42,12 @@ class StreamingAggregationOperation(Operation):
 
 
     async def invoke(self, client: AsyncIOMotorClient, progress: tqdm, phase):
+        logger.debug(f"Starting streaming aggregation operation with batch size {self._batch_size}")
         src = phase.source()
         dest = phase.destination()
 
         cursor, estimated_total = await src.cursor(client)
+        logger.debug(f"Cursor estimated total: {estimated_total} documents")
         progress.total = estimated_total
 
         dest.hint_total(estimated_total)
@@ -92,4 +97,6 @@ class StreamingAggregationOperation(Operation):
         return sum
 
     def __str__(self):
-        return "CursorOperation"
+        stage_count = len(self._aggregation)
+        stage_word = "stage" if stage_count == 1 else "stages"
+        return f"Streaming Aggregation ({stage_count} {stage_word})"

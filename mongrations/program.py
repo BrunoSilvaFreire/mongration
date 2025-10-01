@@ -1,3 +1,4 @@
+import logging
 import os
 import traceback
 from pathlib import Path
@@ -9,6 +10,8 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from mongrations.engine.asyncio_engine import AsyncIOEngine
 from mongrations.loading import load_mongration_script, load_mongration_from_script, build_dependency_graph
 from mongrations.plan import MongrationStatus, MongrationState
+
+logger = logging.getLogger(__name__)
 
 
 class MongrationProgram:
@@ -39,9 +42,9 @@ class MongrationProgram:
         
         url = args.url
         mongration_script = args.mongration
-        print(f"Connecting to mongodb...")
+        logger.info(f"Connecting to mongodb at {url}...")
         client = AsyncIOMotorClient(url)
-        print(f"Connected!")
+        logger.info("Successfully connected to mongodb")
         mongration_path = Path(mongration_script)
         mongration = self.load_mongration_at_path(mongration_path)
         if mongration is None:
@@ -54,10 +57,10 @@ class MongrationProgram:
         states_by_name: dict[dict, MongrationState] = {state.name: state for state in states}
         if mongration.name in states_by_name:
             state = states_by_name[mongration.name]
-            print(f"Current mongration state is {state.status} (index: {state.index}, phasesRan: {state.phases_ran}, name: {state.name})")
+            logger.info(f"Current mongration state is {state.status.name} (index: {state.index}, phasesRan: {state.phases_ran}, name: {state.name})")
         else:
             state = MongrationState(args.index or len(states), mongration_path.stem, MongrationStatus.ABSENT)
-            print("Mongration state isn't present in the database")
+            logger.info("Mongration state isn't present in the database")
         # Set the migration status based on the user's input
         status_to_set = MongrationStatus.by_name(args.status)
         collection = client.get_database("mongrations").get_collection("state")
@@ -68,17 +71,17 @@ class MongrationProgram:
         elif status_to_set == MongrationStatus.FAILED:
             await state.failed(collection)
 
-        print(f'Migration {mongration.name} status forcefully set to {status_to_set.name}')
+        logger.warning(f'Migration {mongration.name} status forcefully set to {status_to_set.name}')
 
     def _check_database_state_health(self, states):
         for i, state in enumerate(states[:-1]):
             next = states[i + 1]
             if next.status == MongrationStatus.COMPLETED and state.status != MongrationStatus.COMPLETED:
-                print(
+                logger.error(
                     f"Mongration {state.name} is not yet completed, but next mongration {next.name} is completed, this should not happen. Expected migration order is:"
                 )
-                msg = ", ".join([f"#{i}: {state.name} ({state.status})" for i, state in enumerate(states[:-1])])
-                print(msg)
+                msg = ", ".join([f"#{i}: {state.name} ({state.status.name})" for i, state in enumerate(states[:-1])])
+                logger.error(msg)
                 return False
         return True
 
@@ -98,12 +101,16 @@ class MongrationProgram:
 
     def load_mongration_at_path(self, path: Path) -> Optional[Mongration]:
         try:
+            logger.debug(f"Loading mongration from path: {path}")
             script = load_mongration_script(path)
             if script is None:
-                print(f"Unable to load mongration at {path}")
+                logger.error(f"Unable to load mongration at {path}")
                 return None
-            return load_mongration_from_script(path.stem, script)
+            mongration = load_mongration_from_script(path.stem, script)
+            logger.debug(f"Successfully loaded mongration: {mongration.name}")
+            return mongration
         except Exception as e:
+            logger.exception(f"Caught an exception while trying to load mongration {path}")
             raise Exception(f"Caught an exception while trying to load mongration {path}") from e
 
     async def _main(self, args, engine):
@@ -114,11 +121,13 @@ class MongrationProgram:
         if mongration_script is not None:
             mongration_path = Path(mongration_script)
             if not mongration_path.exists() or not mongration_path.is_file():
-                print(f"The specified mongration script does not exist: {mongration_script}")
+                logger.error(f"The specified mongration script does not exist: {mongration_script}")
                 return
+            logger.debug(f"Adding mongration script: {mongration_script}")
             paths.append(mongration_path)
 
         if mongrations_dir is not None:
+            logger.debug(f"Scanning mongrations directory: {mongrations_dir}")
             for dirpath, dirnames, filenames in os.walk(mongrations_dir):
                 if '__pycache__' in dirpath.split(os.sep):
                     continue  # Skip this directory
@@ -133,12 +142,13 @@ class MongrationProgram:
             mongrations.append(mongration)
 
         mongrations.sort(key=lambda mon: mon.name)
-        print(f"Total of {len(mongrations)} mongrations.")
+        logger.info(f"Total of {len(mongrations)} mongrations loaded")
         if len(mongrations) == 0:
+            logger.warning("No mongrations found to execute")
             return
-        print(f"Connecting to mongodb...")
+        logger.info(f"Connecting to mongodb at {url}...")
         client = AsyncIOMotorClient(url)
-        print(f"Connected!")
+        logger.info("Successfully connected to mongodb")
         state_collection = client.get_database("mongrations").get_collection("state")
 
         states = await self._fetch_status(state_collection)
@@ -146,23 +156,23 @@ class MongrationProgram:
 
         states_by_name: dict[str, MongrationState] = {state.name: state for state in states}
         if not self._check_database_state_health(states):
-            print("Database state is not healthy. Aborting.")
+            logger.error("Database state is not healthy. Aborting.")
             return
 
         pending_execution = self._list_pending_mongrations(states, mongrations)
 
         if len(pending_execution) == 0:
-            print("All mongrations are up to date.")
+            logger.info("All mongrations are up to date.")
             return
-        print(f"{len(pending_execution)} mongrations need to be run:")
+        logger.info(f"{len(pending_execution)} mongrations need to be run:")
 
         for i, mongration in enumerate(pending_execution):
-            print(f"#{i}: {mongration.name}, {len(mongration.phases())} phases:")
+            logger.info(f"#{i}: {mongration.name}, {len(mongration.phases())} phases:")
             for phase in mongration.phases():
-                print(f"* {phase.name()}")
+                logger.info(f"  * {phase.name()}")
 
         if args.dry_run:
-            print("Dry run specified. Stopping here.")
+            logger.info("Dry run specified. Stopping here.")
             return
 
         os.makedirs("graphs", exist_ok=True)
@@ -180,25 +190,26 @@ class MongrationProgram:
                 MongrationState(index, name, MongrationStatus.ABSENT)
             )
             states.append(state)
-            print(f"Running mongrations {name}...")
+            logger.info(f"Running mongration {name}...")
             canvas = graph.to_canvas(circle_radius=10, padding=5, name_selector=lambda phase: phase.name())
 
-            print(canvas)
+            logger.debug(f"Dependency graph for {name}:\n{canvas}")
 
             with open(f"graphs/{name}.graph.txt", "w") as f:
                 f.writelines(str(canvas))
             if mongration.is_stateful():
                 await state.work_in_progress(state_collection)
             try:
-                for phase in mongration.phases():
-                    current_phase = phase
-                    phase.on_completed(
-                        lambda num_docs_iterated: state.notify_phase_completed(
-                            state_collection,
-                            phase,
-                            num_docs_iterated
+                if mongration.is_stateful():
+                    for phase in mongration.phases():
+                        current_phase = phase
+                        phase.on_completed(
+                            lambda num_docs_iterated: state.notify_phase_completed(
+                                state_collection,
+                                phase,
+                                num_docs_iterated
+                            )
                         )
-                    )
                 await engine.invoke(
                     client,
                     mongration,
@@ -207,7 +218,9 @@ class MongrationProgram:
             except Exception as e:
                 if mongration.is_stateful():
                     await state.failed(state_collection)
+                logger.exception(f"An exception occurred while running mongration {mongration.name}, phase {current_phase.name()}")
                 raise Exception(f"An exception occoured while running mongration {mongration.name}, phase {current_phase.name()}") from e
                 
             if mongration.is_stateful():
                 await state.completed(state_collection)
+            logger.info(f"Successfully completed mongration {name}")

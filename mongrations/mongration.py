@@ -1,14 +1,19 @@
+import logging
 from mongrations.io.source import CollectionSource
 from mongrations.phase import Phase
+
+logger = logging.getLogger(__name__)
 
 
 class Mongration:
     def __init__(self, name: str):
+        logger.debug(f"Initializing mongration: {name}")
         self.name = name
         self._phases = list[Phase]()
         self._stateless = False
 
     def phase(self, name):
+        logger.debug(f"Creating phase '{name}' for mongration {self.name}")
         ph = Phase(name)
         self._phases.append(ph)
         return ph
@@ -23,6 +28,7 @@ class Mongration:
         return not self._stateless
 
     def mark_stateless(self):
+        logger.debug(f"Marking mongration {self.name} as stateless")
         self._stateless = True
 
     def convert_to_uuid_phase(
@@ -33,6 +39,7 @@ class Mongration:
         keep_legacy: bool = False,
         convertion_batch_size=256
     ):
+        logger.info(f"Setting up UUID conversion for {database}.{collection}, field: {field}, keep_legacy: {keep_legacy}")
         convert_phase = self.phase(f"Convert {database}.{collection} field {field} to UUID")
         convert_phase.from_collection(database, collection)
         tmp_collection_name = f"tmp-{collection}-uuid-conversion-{field}"

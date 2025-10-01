@@ -54,7 +54,8 @@ class AbstractPythonOperation(Operation):
             return current_batch + 1
 
     def __str__(self):
-        return self._block.__name__
+        block_name = getattr(self._block, '__name__', 'lambda')
+        return f"Python ({block_name})"
 
 
 class DocumentPythonOperation(AbstractPythonOperation):
@@ -71,3 +72,35 @@ class DocumentPythonOperation(AbstractPythonOperation):
         async for doc in cursor:
             yield self._block(doc)
             progress.update()
+
+
+class GeneratorPythonOperation(AbstractPythonOperation):
+    """Python operation that generates documents without needing a source."""
+    def __init__(self, block):
+        super().__init__(block)
+
+    def needs_source(self):
+        return False
+
+    async def _iterate(self, client, phase, progress):
+        destination = phase.destination()
+        # Call the block function once to generate a document
+        # The block should return a single document or a list of documents
+        result = self._block(None)
+        
+        if isinstance(result, list):
+            progress.total = len(result)
+            destination.hint_total(len(result))
+            for doc in result:
+                yield doc
+                progress.update()
+        else:
+            progress.total = 1
+            destination.hint_total(1)
+            yield result
+            progress.update()
+
+    def __str__(self):
+        block_name = getattr(self._block, '__name__', 'lambda')
+        return f"Generate ({block_name})"
+

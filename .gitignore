@@ -54,3 +54,8 @@ fabric.properties
 *.rar
 hs_err_pid*
 replay_pid*
+
+.venv
+tests/tests/reports
+tests/graphs
+.task

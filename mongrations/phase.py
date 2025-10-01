@@ -1,3 +1,4 @@
+import logging
 from asyncio import Future
 from typing import Callable, Optional
 
@@ -12,8 +13,10 @@ from mongrations.operations.export_operation import ExportOperation
 from mongrations.operations.import_operation import ImportOperation
 from mongrations.operations.index_operation import IndexOperation
 from mongrations.operations.operation import Operation
-from mongrations.operations.python_operation import DocumentPythonOperation
+from mongrations.operations.python_operation import DocumentPythonOperation, GeneratorPythonOperation
 from mongrations.operations.rename_collection_operation import RenameCollectionOperation
+
+logger = logging.getLogger(__name__)
 
 
 class Phase:
@@ -26,6 +29,7 @@ class Phase:
     _needs_configuration: list["Phase"]
 
     def __init__(self, name):
+        logger.debug(f"Initializing phase: {name}")
         self._name = name
         self._dependencies = list()
         self._source = None
@@ -45,7 +49,9 @@ class Phase:
 
     def from_phase(self, source_phase: "Phase"):
         if self == source_phase:
+            logger.error(f"Phase {self._name} cannot read from itself")
             raise Exception("Cannot read phase from itself")
+        logger.debug(f"Phase {self._name} depends on phase {source_phase.name()}")
         self._dependencies.append(source_phase)
         if self._operation is not None:
             self._configure_dependency(source_phase)
@@ -53,9 +59,11 @@ class Phase:
             self._needs_configuration.append(source_phase)
 
     def _configure_dependency(self, source_phase):
+        logger.debug(f"Configuring dependency from {source_phase.name()} to {self._name}")
         dest = source_phase.destination()
 
         if self._operation is None:
+            logger.debug(f"No operation set for phase {self._name}, using default aggregation")
             self.use_aggregation([])
 
         # Configure destination from operation
@@ -63,15 +71,18 @@ class Phase:
             if dest is not None:
                 compatible = self._operation.accepts_dependency_output(source_phase, dest)
                 if not compatible:
+                    logger.error(f"Operation {self._operation} on phase {self.sanitized_name()} is not compatible with destination {dest}")
                     raise Exception(f"Operation {self._operation} on phase {self.sanitized_name()} is not compatible with destination {dest}")
             else:
                 dest = self._operation.create_default_destination(source_phase)
                 if dest is None:
+                    logger.error(f"Phase {self._name} cannot create a default destination from {source_phase._name}")
                     raise Exception(f"Phase {self._name} cannot create a default destination from {source_phase._name}.")
 
         if dest is not None:
             source_phase._destination = dest
             dest.pipe_into(source_phase, self)
+            logger.debug(f"Successfully configured dependency: {source_phase.name()} -> {self._name}")
 
     def name(self):
         return self._name
@@ -90,6 +101,11 @@ class Phase:
 
     def use_python(self, callback):
         self._operation = DocumentPythonOperation(callback)
+        self._attempt_auto_configuration()
+
+    def use_generator(self, callback):
+        """Use a Python generator function to create documents without a source."""
+        self._operation = GeneratorPythonOperation(callback)
         self._attempt_auto_configuration()
 
     def use_aggregation(self, aggregation, options=None):
@@ -115,10 +131,10 @@ class Phase:
         self._operation = ExportOperation(block)
         self._attempt_auto_configuration()
 
-    def create_index(self, index, database=None, collection=None):
+    def create_index(self, index, database=None, collection=None, index_type: Optional[str] = None):
         if database is not None and collection is not None:
             self._source = CollectionSource(database, collection, None)
-        self._operation = IndexOperation(index)
+        self._operation = IndexOperation(index, index_type)
         self._attempt_auto_configuration()
 
     def _attempt_auto_configuration(self):
@@ -126,10 +142,11 @@ class Phase:
             case 0:
                 return
             case 1:
+                logger.debug(f"Auto-configuring phase {self.name()}")
                 self._configure_dependency(self._needs_configuration[0])
                 self._needs_configuration.clear()
             case _:
-                print(f"Unable to auto-configure phase {self.name()} because it has multiple dependencies.")
+                logger.warning(f"Unable to auto-configure phase {self.name()} because it has multiple dependencies")
                 return
 
     def operation(self):
@@ -163,11 +180,14 @@ class Phase:
     async def prepare(self, engine):
         if len(self._must_wait) == 0:
             return
+        logger.debug(f"Phase {self._name} waiting for {len(self._must_wait)} futures")
         await engine.wait_all(self._must_wait)
+        logger.debug(f"Phase {self._name} finished waiting")
 
     async def notify_completion(self, num_docs_iterated):
         if self._isComplete:
             return
+        logger.debug(f"Phase {self._name} notifying completion with {num_docs_iterated} documents processed")
         self._isComplete = True
         for callback in self._completionCallbacks:
             returned = callback(num_docs_iterated)
@@ -175,13 +195,16 @@ class Phase:
                 await returned
 
     async def finalize(self, engine, client):
+        logger.debug(f"Finalizing phase {self._name} with {len(self._finalizers)} finalizers")
         to_await = list()
         for name, finalizer in self._finalizers:
+            logger.debug(f"Running finalizer '{name}' for phase {self._name}")
             returned = finalizer(client)
             if returned is not None:
                 to_await.append(returned)
         if len(to_await) > 0:
             await engine.wait_all(to_await)
+        logger.debug(f"Phase {self._name} finalized")
     
     def rename_collection(self, new_name: str):
         self._operation = RenameCollectionOperation(new_name)

@@ -20,3 +20,7 @@ class ImportOperation(AbstractPythonOperation):
         async for doc in self.entry_iterator(source.path):
             yield self._block(doc)
             progress.update()
+
+    def __str__(self):
+        block_name = getattr(self._block, '__name__', 'transform')
+        return f"Import ({block_name})"

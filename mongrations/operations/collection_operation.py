@@ -36,3 +36,13 @@ class CollectionOperation(Operation):
         progress.update()
 
         return result or 1
+
+    def __str__(self):
+        return "Collection Operation"
+
+    def _format_collection_info(self, phase):
+        """Helper method to format database.collection info from phase source."""
+        src = phase.source() if phase else None
+        if src and isinstance(src, CollectionSource):
+            return f"{src.database}.{src.collection}"
+        return "unknown"
