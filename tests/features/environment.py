@@ -4,6 +4,8 @@ import shutil
 from pathlib import Path
 import pymongo
 import logging
+import json
+from datetime import datetime
 from tests.fixtures.mongodb_fixture import MongoDBFixture
 
 
@@ -80,6 +82,10 @@ def before_scenario(context, scenario):
 
 def after_scenario(context, scenario):
     """Cleanup after each scenario"""
+    # Take a snapshot of the MongoDB database before cleanup
+    if hasattr(context, 'mongodb_url'):
+        _take_mongodb_snapshot(context, scenario)
+    
     # Clean up any test files created during the scenario
     # Only clean the temporary mongrations directory, not the actual test_migrations directory
     if hasattr(context, 'mongrations_dir') and hasattr(context, 'temp_dir'):
@@ -89,3 +95,117 @@ def after_scenario(context, scenario):
             for file in context.mongrations_dir.glob("*.py"):
                 if file.name != "__init__.py":
                     file.unlink()
+
+
+def _take_mongodb_snapshot(context, scenario):
+    """
+    Take a snapshot of all MongoDB databases and save to reports directory.
+    Each collection is saved as a separate file.
+    
+    Args:
+        context: Behave context object
+        scenario: Behave scenario object
+    """
+    try:
+        # Create reports directory if it doesn't exist
+        tests_dir = Path(__file__).parent.parent
+        reports_dir = tests_dir / "tests" / "reports"
+        reports_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Create a sanitized scenario name for the directory
+        scenario_name = scenario.name.replace(' ', '_').replace('/', '_')
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        snapshot_dir_name = f"snapshot_{scenario_name}_{timestamp}"
+        snapshot_dir = reports_dir / snapshot_dir_name
+        snapshot_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Connect to MongoDB
+        client = pymongo.MongoClient(context.mongodb_url, serverSelectionTimeoutMS=5000)
+        
+        # Create a manifest file with metadata
+        manifest = {
+            "scenario": scenario.name,
+            "timestamp": timestamp,
+            "status": scenario.status.name,
+            "databases": {}
+        }
+        
+        # Get all databases (excluding system databases)
+        db_names = [db for db in client.list_database_names() 
+                    if db not in ['admin', 'local', 'config']]
+        
+        collection_count = 0
+        
+        # Snapshot each database
+        for db_name in db_names:
+            db = client[db_name]
+            
+            # Create database directory
+            db_dir = snapshot_dir / db_name
+            db_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Get all collections in the database
+            collection_names = db.list_collection_names()
+            manifest["databases"][db_name] = {
+                "collections": collection_names,
+                "collection_count": len(collection_names)
+            }
+            
+            for coll_name in collection_names:
+                collection = db[coll_name]
+                
+                # Get all documents from the collection
+                documents = list(collection.find({}))
+                
+                # Convert ObjectId and other BSON types to JSON-serializable format
+                for doc in documents:
+                    _convert_to_json_serializable(doc)
+                
+                # Save collection to its own file
+                collection_file = db_dir / f"{coll_name}.json"
+                collection_data = {
+                    "database": db_name,
+                    "collection": coll_name,
+                    "count": len(documents),
+                    "documents": documents
+                }
+                
+                with open(collection_file, 'w') as f:
+                    json.dump(collection_data, f, indent=2, default=str)
+                
+                collection_count += 1
+        
+        client.close()
+        
+        # Write manifest file
+        manifest_path = snapshot_dir / "_manifest.json"
+        with open(manifest_path, 'w') as f:
+            json.dump(manifest, f, indent=2, default=str)
+        
+        print(f"✓ MongoDB snapshot saved to: {snapshot_dir}")
+        print(f"  - {len(db_names)} database(s), {collection_count} collection(s)")
+        
+    except Exception as e:
+        print(f"Warning: Could not take MongoDB snapshot: {e}")
+
+
+def _convert_to_json_serializable(obj):
+    """
+    Recursively convert BSON types to JSON-serializable types.
+    
+    Args:
+        obj: Object to convert (dict, list, or primitive)
+    """
+    if isinstance(obj, dict):
+        for key, value in obj.items():
+            if hasattr(value, '__dict__') and hasattr(value, '__class__'):
+                # Convert BSON types like ObjectId, DateTime, etc.
+                obj[key] = str(value)
+            elif isinstance(value, (dict, list)):
+                _convert_to_json_serializable(value)
+    elif isinstance(obj, list):
+        for i, item in enumerate(obj):
+            if hasattr(item, '__dict__') and hasattr(item, '__class__'):
+                obj[i] = str(item)
+            elif isinstance(item, (dict, list)):
+                _convert_to_json_serializable(item)

@@ -449,4 +449,3 @@ files = [
 lock-version = "2.1"
 python-versions = "^3.8"
 content-hash = "86139c46eeb35e555075d1f7940022d61e7394732e52551d39d4d9e7caae3c1a"
-**/*.output

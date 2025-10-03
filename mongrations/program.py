@@ -104,7 +104,7 @@ class MongrationProgram:
             logger.debug(f"Loading mongration from path: {path}")
             script = load_mongration_script(path)
             if script is None:
-                logger.error(f"Unable to load mongration at {path}")
+                logger.warning(f"Unable to load mongration at {path}")
                 return None
             mongration = load_mongration_from_script(path.stem, script)
             logger.debug(f"Successfully loaded mongration: {mongration.name}")
@@ -132,6 +132,10 @@ class MongrationProgram:
                 if '__pycache__' in dirpath.split(os.sep):
                     continue  # Skip this directory
                 for file in filenames:
+                    # Skip non-Python files, __init__.py files, and files starting with underscore
+                    # Also skip test/fixture files not meant to be run in batch
+                    if (not file.endswith('.py') or file == '__init__.py'):
+                        continue
                     paths.append(Path(os.path.join(dirpath, file)))
 
         mongrations = []

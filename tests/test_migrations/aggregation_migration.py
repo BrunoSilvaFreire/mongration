@@ -33,4 +33,7 @@ def mongration(migration):
         ]
     )
     
+    # Set up a pass-through operation to process the aggregation results
+    phase.use_python(lambda doc: doc)
+    
     phase.into_collection("test_db", "aggregated_collection")

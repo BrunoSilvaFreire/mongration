@@ -29,58 +29,61 @@ def step_clean_mongodb(context):
         context.scenario.skip("MongoDB not available")
 
 
-@given('a temporary mongrations directory')
-def step_temp_mongrations_dir(context):
-    """Ensure we have a temporary directory for mongrations"""
-    # This is already set up in environment.py
-    assert context.mongrations_dir.exists()
-
-
-@given('I have a mongration script that creates a collection')
-def step_create_collection_mongration(context):
-    """Use existing simple migration"""
+@given('I run the mongration "{filename}"')
+def step_setup_single_mongration(context, filename):
+    """Set up a single mongration by filename (for use with Given)"""
     test_migrations_dir = Path(__file__).parent.parent.parent / "test_migrations"
-    context.mongration_file = test_migrations_dir / "simple_migration.py"
+    context.mongration_file = test_migrations_dir / filename
 
 
-@given('I have a mongration script with multiple phases')
-def step_multiple_phases_mongration(context):
-    """Use existing index migration which has multiple phases"""
+@when('I run the mongration "{filename}"')
+def step_run_single_mongration(context, filename):
+    """Run a single mongration by filename"""
+    if not context.mongodb_available:
+        context.scenario.skip("MongoDB not available")
+        return
+    
     test_migrations_dir = Path(__file__).parent.parent.parent / "test_migrations"
-    context.mongration_file = test_migrations_dir / "index_migration.py"
-
-
-@given('I have a mongration script that will fail')
-def step_failing_mongration(context):
-    """Use existing failing migration"""
-    test_migrations_dir = Path(__file__).parent.parent.parent / "test_migrations"
-    context.mongration_file = test_migrations_dir / "failing_migration.py"
-
-
-@given('I have a stateless mongration script')
-def step_stateless_mongration(context):
-    """Use existing stateless migration"""
-    test_migrations_dir = Path(__file__).parent.parent.parent / "test_migrations"
-    context.mongration_file = test_migrations_dir / "stateless_migration.py"
-
-
-@given('I have multiple mongration scripts with dependencies')
-def step_dependent_mongrations(context):
-    """Use existing test migrations directory"""
-    test_migrations_dir = Path(__file__).parent.parent.parent / "test_migrations"
-    # Override mongrations_dir to point to test_migrations for this scenario
-    context.mongrations_dir = test_migrations_dir
-    context.mongration_files = [
-        test_migrations_dir / "simple_migration.py",
-        test_migrations_dir / "index_migration.py"
+    context.mongration_file = test_migrations_dir / filename
+    
+    # Execute the mongration
+    cmd = [
+        sys.executable, "-m", "mongrations.main",
+        "--url", context.mongodb_url,
+        "run",
+        "--mongration", str(context.mongration_file)
     ]
+    
+    try:
+        result = subprocess.run(cmd, cwd=Path(__file__).parent.parent.parent, 
+                              capture_output=True, text=True, timeout=30)
+        context.run_result = result
+        context.run_success = result.returncode == 0
+        # Print output for debugging
+        if result.stdout:
+            print(f"STDOUT:\n{result.stdout}")
+        if result.stderr:
+            print(f"STDERR:\n{result.stderr}")
+    except subprocess.TimeoutExpired:
+        context.run_success = False
+        context.run_result = None
 
 
-@given('I have a mongration script that creates an index')
-def step_index_mongration(context):
-    """Use existing index migration"""
+@given('I run the mongrations')
+def step_setup_mongrations(context):
+    """Set up multiple mongration scripts from table"""
     test_migrations_dir = Path(__file__).parent.parent.parent / "test_migrations"
-    context.mongration_file = test_migrations_dir / "index_migration.py"
+    
+    # Parse the table to get mongration files
+    mongration_files = []
+    for row in context.table:
+        script_name = row['script']
+        mongration_file = test_migrations_dir / f"{script_name}.py"
+        mongration_files.append(mongration_file)
+    
+    # Store in context for later use
+    context.mongrations_dir = test_migrations_dir
+    context.mongration_files = mongration_files
 
 
 @given('I have a collection with test data')
@@ -125,36 +128,6 @@ def step_mongration_status(context, status):
     context.initial_status = status
 
 
-@when('I run the mongration')
-def step_run_mongration(context):
-    """Execute the mongration"""
-    if not context.mongodb_available:
-        context.scenario.skip("MongoDB not available")
-        return
-    
-    # Use subprocess to run mongrate command
-    cmd = [
-        sys.executable, "-m", "mongrations.main",
-        "--url", context.mongodb_url,
-        "run",
-        "--mongration", str(context.mongration_file)
-    ]
-    
-    try:
-        result = subprocess.run(cmd, cwd=Path(__file__).parent.parent.parent, 
-                              capture_output=True, text=True, timeout=30)
-        context.run_result = result
-        context.run_success = result.returncode == 0
-        # Print output for debugging
-        if result.stdout:
-            print(f"STDOUT:\n{result.stdout}")
-        if result.stderr:
-            print(f"STDERR:\n{result.stderr}")
-    except subprocess.TimeoutExpired:
-        context.run_success = False
-        context.run_result = None
-
-
 @when('I run the mongration in dry run mode')
 def step_run_mongration_dry(context):
     """Execute the mongration in dry run mode"""
@@ -182,26 +155,61 @@ def step_run_mongration_dry(context):
 
 @when('I run the mongrations directory')
 def step_run_mongrations_dir(context):
-    """Execute all mongrations in directory"""
+    """Execute mongrations - either specific files or entire directory"""
     if not context.mongodb_available:
         context.scenario.skip("MongoDB not available")
         return
     
-    cmd = [
-        sys.executable, "-m", "mongrations.main",
-        "--url", context.mongodb_url,
-        "run",
-        "--mongrations-dir", str(context.mongrations_dir)
-    ]
-    
-    try:
-        result = subprocess.run(cmd, cwd=Path(__file__).parent.parent.parent, 
-                              capture_output=True, text=True, timeout=30)
-        context.run_result = result
-        context.run_success = result.returncode == 0
-    except subprocess.TimeoutExpired:
-        context.run_success = False
-        context.run_result = None
+    # If specific files were set up, run them individually
+    if hasattr(context, 'mongration_files') and context.mongration_files:
+        # Run each migration file individually
+        all_success = True
+        combined_stdout = []
+        combined_stderr = []
+        
+        for mongration_file in context.mongration_files:
+            cmd = [
+                sys.executable, "-m", "mongrations.main",
+                "--url", context.mongodb_url,
+                "run",
+                "--mongration", str(mongration_file)
+            ]
+            
+            try:
+                result = subprocess.run(cmd, cwd=Path(__file__).parent.parent.parent, 
+                                      capture_output=True, text=True, timeout=30)
+                combined_stdout.append(result.stdout)
+                combined_stderr.append(result.stderr)
+                if result.returncode != 0:
+                    all_success = False
+            except subprocess.TimeoutExpired:
+                all_success = False
+                break
+        
+        # Create a combined result
+        context.run_success = all_success
+        context.run_result = type('obj', (object,), {
+            'returncode': 0 if all_success else 1,
+            'stdout': '\n'.join(combined_stdout),
+            'stderr': '\n'.join(combined_stderr)
+        })()
+    else:
+        # Run entire directory
+        cmd = [
+            sys.executable, "-m", "mongrations.main",
+            "--url", context.mongodb_url,
+            "run",
+            "--mongrations-dir", str(context.mongrations_dir)
+        ]
+        
+        try:
+            result = subprocess.run(cmd, cwd=Path(__file__).parent.parent.parent, 
+                                  capture_output=True, text=True, timeout=30)
+            context.run_result = result
+            context.run_success = result.returncode == 0
+        except subprocess.TimeoutExpired:
+            context.run_success = False
+            context.run_result = None
 
 
 @when('I run the mongration multiple times')
