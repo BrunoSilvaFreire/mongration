@@ -411,21 +411,37 @@ def step_collection_exists(context):
     if skip_if_mongodb_unavailable(context):
         return
     
-    with mongodb_client(context) as db:
-        collections = db.list_collection_names()
-        # Check for collections created by test migrations
-        expected_collections = [context.test_collection_name, context.indexed_collection_name]
-        found_collections = [col for col in expected_collections if col in collections]
-        
-        assert len(found_collections) > 0, \
-            f"None of the expected collections {expected_collections} found. Available: {collections}"
-        
-        # Verify the found collection actually has data (not just created empty)
-        for col_name in found_collections:
-            count = db[col_name].count_documents({})
-            # Some migrations might create empty collections, so just warn but don't fail
-            if count == 0:
-                print(f"Warning: Collection '{col_name}' exists but is empty")
+    # Check both test_db_name and fallback_db_name since migrations hardcode test_db
+    fallback_db = getattr(context, 'fallback_db_name', 'test_db')
+    databases_to_check = [getattr(context, 'test_db_name', fallback_db)]
+    if databases_to_check[0] != fallback_db:
+        databases_to_check.append(fallback_db)
+    
+    expected_collections = [context.test_collection_name, context.indexed_collection_name]
+    found_collections = []
+    all_collections = []
+    
+    for db_name in databases_to_check:
+        with mongodb_client(context, db_name) as db:
+            collections = db.list_collection_names()
+            all_collections.extend(collections)
+            # Check for collections created by test migrations
+            found_collections.extend([col for col in expected_collections if col in collections])
+    
+    assert len(found_collections) > 0, \
+        f"None of the expected collections {expected_collections} found. Available: {all_collections}"
+    
+    # Verify the found collection actually has data (not just created empty)
+    for col_name in set(found_collections):  # use set to avoid duplicates
+        # Find which database has this collection
+        for db_name in databases_to_check:
+            with mongodb_client(context, db_name) as db:
+                if col_name in db.list_collection_names():
+                    count = db[col_name].count_documents({})
+                    # Some migrations might create empty collections, so just warn but don't fail
+                    if count == 0:
+                        print(f"Warning: Collection '{col_name}' exists but is empty")
+                    break
 
 
 @then('the collection should not exist in the database')
@@ -644,20 +660,35 @@ def step_verify_index_on_collection_field(context, field_name, collection_name):
     if skip_if_mongodb_unavailable(context):
         return
     
-    with mongodb_client(context) as db:
-        collection = db[collection_name]
-        indexes = list(collection.list_indexes())
-        
-        # Check for an index on the specified field
-        field_index_found = any(field_name in idx.get('key', {}) for idx in indexes)
-        assert field_index_found, \
-            f"Expected index on '{field_name}' field not found in '{collection_name}'. " \
-            f"Available indexes: {[idx.get('key', {}) for idx in indexes]}"
-        # Log index metadata for debugging
-        for idx in indexes:
-            if field_name in idx.get('key', {}):
-                logger.info(f"Found index on '{field_name}' field: {idx['name']} with key {idx['key']}")
-                print(f"Found index on '{field_name}' field: {idx['name']} with key {idx['key']}")
+    # Check both test_db_name and fallback_db_name since migrations hardcode test_db
+    fallback_db = getattr(context, 'fallback_db_name', 'test_db')
+    databases_to_check = [getattr(context, 'test_db_name', fallback_db)]
+    if databases_to_check[0] != fallback_db:
+        databases_to_check.append(fallback_db)
+    
+    field_index_found = False
+    indexes = []
+    
+    for db_name in databases_to_check:
+        with mongodb_client(context, db_name) as db:
+            if collection_name not in db.list_collection_names():
+                continue
+            collection = db[collection_name]
+            indexes = list(collection.list_indexes())
+            
+            # Check for an index on the specified field
+            if any(field_name in idx.get('key', {}) for idx in indexes):
+                field_index_found = True
+                # Log index metadata for debugging
+                for idx in indexes:
+                    if field_name in idx.get('key', {}):
+                        logger.info(f"Found index on '{field_name}' field: {idx['name']} with key {idx['key']}")
+                        print(f"Found index on '{field_name}' field: {idx['name']} with key {idx['key']}")
+                break
+    
+    assert field_index_found, \
+        f"Expected index on '{field_name}' field not found in '{collection_name}'. " \
+        f"Available indexes: {[idx.get('key', {}) for idx in indexes]}"
 
 
 @then('at least {count:d} indexes should exist on "{collection_name}"')
@@ -666,16 +697,28 @@ def step_at_least_n_indexes_on_collection(context, count, collection_name):
     if skip_if_mongodb_unavailable(context):
         return
     
-    with mongodb_client(context) as db:
-        collection = db[collection_name]
-        indexes = list(collection.list_indexes())
+    # Check both test_db_name and fallback_db_name since migrations hardcode test_db
+    fallback_db = getattr(context, 'fallback_db_name', 'test_db')
+    databases_to_check = [getattr(context, 'test_db_name', fallback_db)]
+    if databases_to_check[0] != fallback_db:
+        databases_to_check.append(fallback_db)
+    
+    indexes = []
+    for db_name in databases_to_check:
+        with mongodb_client(context, db_name) as db:
+            if collection_name not in db.list_collection_names():
+                continue
+            collection = db[collection_name]
+            indexes = list(collection.list_indexes())
+            if len(indexes) > 0:
+                break
 
-        assert len(indexes) >= count, f"Expected at least {count} indexes on '{collection_name}', found {len(indexes)}"
-        # Log index information for debugging
-        for idx in indexes:
-            logger.info(f"  - {idx.get('name')}: {idx.get('key')}")
-        for idx in indexes:
-            print(f"  - {idx.get('name')}: {idx.get('key')}")
+    assert len(indexes) >= count, f"Expected at least {count} indexes on '{collection_name}', found {len(indexes)}"
+    # Log index information for debugging
+    for idx in indexes:
+        logger.info(f"  - {idx.get('name')}: {idx.get('key')}")
+    for idx in indexes:
+        print(f"  - {idx.get('name')}: {idx.get('key')}")
 
 
 @then('the indexes should be created')
@@ -713,26 +756,40 @@ def step_collection_has_aggregated_data(context, collection_name: str, required_
     if skip_if_mongodb_unavailable(context):
         return
     
-    with mongodb_client(context) as db:
-        # Check if collection was created and has data
-        assert collection_name in db.list_collection_names(), \
-            f"Collection '{collection_name}' not found. Available: {db.list_collection_names()}"
+    # Check both test_db_name and fallback_db_name since migrations hardcode test_db
+    fallback_db = getattr(context, 'fallback_db_name', 'test_db')
+    databases_to_check = [getattr(context, 'test_db_name', fallback_db)]
+    if databases_to_check[0] != fallback_db:
+        databases_to_check.append(fallback_db)
+    
+    collection_found = False
+    docs = []
+    
+    for db_name in databases_to_check:
+        with mongodb_client(context, db_name) as db:
+            if collection_name in db.list_collection_names():
+                collection_found = True
+                collection = db[collection_name]
+                docs = list(collection.find())
+                if len(docs) > 0:
+                    break
+    
+    # Check if collection was created and has data
+    assert collection_found, \
+        f"Collection '{collection_name}' not found in any database."
+    
+    # Should have aggregated data
+    assert len(docs) > 0, f"Expected aggregated data in '{collection_name}' but found none"
+    
+    # Verify aggregation structure - should have required fields
+    for doc in docs:
+        for field in required_fields:
+            assert field in doc, f"Aggregated document missing '{field}' field: {doc}"
         
-        collection = db[collection_name]
-        docs = list(collection.find())
-        
-        # Should have aggregated data
-        assert len(docs) > 0, f"Expected aggregated data in '{collection_name}' but found none"
-        
-        # Verify aggregation structure - should have required fields
-        for doc in docs:
-            for field in required_fields:
-                assert field in doc, f"Aggregated document missing '{field}' field: {doc}"
-            
-            # If 'count' is in required fields, verify it's a positive number
-            if 'count' in required_fields:
-                assert isinstance(doc["count"], (int, float)) and doc["count"] > 0, \
-                    f"Invalid count value: {doc.get('count')}"
+        # If 'count' is in required fields, verify it's a positive number
+        if 'count' in required_fields:
+            assert isinstance(doc["count"], (int, float)) and doc["count"] > 0, \
+                f"Invalid count value: {doc.get('count')}"
 
 # ============================================================================
 # Given Steps - Advanced Collection Setup
@@ -926,44 +983,41 @@ def step_verify_uuid_conversion(context):
 
 @then('the legacy string IDs should be preserved')
 def step_verify_legacy_preserved(context):
-    """Verify legacy IDs are preserved in documents"""
+    """Verify legacy IDs are preserved by checking for pre_uuid_conversion collection"""
     if skip_if_mongodb_unavailable(context):
         return
     
+    # When keep_legacy=True, convert_to_uuid_phase renames old collection to {collection}__pre_uuid_conversion
     # Get list of all databases to check
     client = pymongo.MongoClient(context.mongodb_url, serverSelectionTimeoutMS=5000)
     try:
         all_databases = [db for db in client.list_database_names() 
                         if db not in ['admin', 'local', 'config', 'mongrations']]
         
-        legacy_found = False
+        legacy_collection_found = False
         
         for db_name in all_databases:
             db = client[db_name]
             for collection_name in db.list_collection_names():
-                if "uuid" in collection_name.lower() and "legacy" in collection_name.lower():
+                # Look for collection with __pre_uuid_conversion suffix
+                if "pre_uuid_conversion" in collection_name.lower():
                     collection = db[collection_name]
                     docs = list(collection.find().limit(5))
                     
                     if docs:
-                        # Verify documents have a legacy ID field
+                        legacy_collection_found = True
+                        # Verify documents have string IDs (the legacy format)
                         for doc in docs:
-                            # Check for common legacy field names
-                            legacy_fields = ['legacy_id', 'old_id', 'string_id', 'original_id']
-                            has_legacy_field = any(field in doc for field in legacy_fields)
-                            if has_legacy_field:
-                                legacy_found = True
-                                # Verify the legacy field contains a string
-                                legacy_value = next((doc[f] for f in legacy_fields if f in doc), None)
-                                assert isinstance(legacy_value, str), \
-                                    f"Legacy ID field should be string, got {type(legacy_value)}"
-                        
-                        if legacy_found:
-                            break
-            if legacy_found:
+                            assert "_id" in doc, f"Document missing _id field: {doc}"
+                            # The preserved collection should have the original string IDs
+                            assert isinstance(doc["_id"], str), \
+                                f"Legacy collection should have string _id, got {type(doc['_id'])}: {doc['_id']}"
+                        break
+            if legacy_collection_found:
                 break
         
-        assert legacy_found, "No UUID collection with preserved legacy IDs found"
+        assert legacy_collection_found, \
+            f"No pre_uuid_conversion collection found. This collection should preserve the original data. Databases checked: {all_databases}"
     finally:
         client.close()
 
@@ -974,19 +1028,41 @@ def step_verify_new_schema(context):
     if skip_if_mongodb_unavailable(context):
         return
     
-    with mongodb_client(context) as db:
-        collection = db[context.new_schema_collection_name]
-        docs = list(collection.find().limit(10))
+    # Check both test_db_name and fallback_db_name since migrations hardcode test_db
+    fallback_db = getattr(context, 'fallback_db_name', 'test_db')
+    databases_to_check = [getattr(context, 'test_db_name', fallback_db)]
+    if databases_to_check[0] != fallback_db:
+        databases_to_check.append(fallback_db)
+    
+    docs = []
+    for db_name in databases_to_check:
+        with mongodb_client(context, db_name) as db:
+            if context.new_schema_collection_name in db.list_collection_names():
+                collection = db[context.new_schema_collection_name]
+                docs = list(collection.find().limit(10))
+                if len(docs) > 0:
+                    break
+    
+    assert len(docs) > 0, "No documents found in new schema collection"
+    
+    # Define expected new schema fields based on schema_transformation_migration.py
+    # Old schema: {first_name, last_name, dob}
+    # New schema: {name: {first, last}, birth_date, migrated}
+    expected_fields = ["name", "birth_date", "migrated"]
+    
+    for i, doc in enumerate(docs):
+        for field in expected_fields:
+            assert field in doc, \
+                f"Document {i} missing expected field '{field}'. Document: {doc}"
         
-        assert len(docs) > 0, "No documents found in new schema collection"
-        
-        # Define expected new schema fields
-        expected_fields = ["full_name", "birth_date"]
-        
-        for i, doc in enumerate(docs):
-            for field in expected_fields:
-                assert field in doc, \
-                    f"Document {i} missing expected field '{field}'. Document: {doc}"
+        # Verify name is a dict with first and last
+        if "name" in doc:
+            assert isinstance(doc["name"], dict), \
+                f"Document {i} 'name' should be a dict, got {type(doc['name'])}"
+            assert "first" in doc["name"], \
+                f"Document {i} 'name' dict missing 'first' field"
+            assert "last" in doc["name"], \
+                f"Document {i} 'name' dict missing 'last' field"
 
 
 @then('data should flow through the pipe')
@@ -995,22 +1071,36 @@ def step_verify_pipe_flow(context):
     if skip_if_mongodb_unavailable(context):
         return
     
-    # Check that dependent phases produced results
-    with mongodb_client(context) as db:
-        collections = db.list_collection_names()
-        
-        # Look for result collections created by phase dependencies
-        result_collections = [col for col in collections 
-                            if any(keyword in col.lower() for keyword in ["senior", "result", "merged", "transformed", "filtered"])]
-        
-        assert len(result_collections) > 0, \
-            f"No result collections found from pipe flow. Available collections: {collections}"
-        
-        # Verify result collections have data
-        for result_col in result_collections:
+    # Check both test_db_name and fallback_db_name since migrations hardcode test_db
+    fallback_db = getattr(context, 'fallback_db_name', 'test_db')
+    databases_to_check = [getattr(context, 'test_db_name', fallback_db)]
+    if databases_to_check[0] != fallback_db:
+        databases_to_check.append(fallback_db)
+    
+    result_collections = []
+    all_collections = []
+    
+    for db_name in databases_to_check:
+        with mongodb_client(context, db_name) as db:
+            collections = db.list_collection_names()
+            all_collections.extend(collections)
+            
+            # Look for result collections created by phase dependencies
+            result_cols = [col for col in collections 
+                          if any(keyword in col.lower() for keyword in ["senior", "result", "merged", "transformed", "filtered"])]
+            
+            if result_cols:
+                result_collections.extend([(db_name, col) for col in result_cols])
+    
+    assert len(result_collections) > 0, \
+        f"No result collections found from pipe flow. Available collections: {all_collections}"
+    
+    # Verify result collections have data
+    for db_name, result_col in result_collections:
+        with mongodb_client(context, db_name) as db:
             count = db[result_col].count_documents({})
             assert count > 0, \
-                f"Result collection '{result_col}' exists but has no documents (pipe may not have flowed data)"
+                f"Result collection '{result_col}' in '{db_name}' exists but has no documents (pipe may not have flowed data)"
     
     # Verify migration state shows multiple phases executed
     with mongodb_client(context, context.state_db_name) as state_db:
