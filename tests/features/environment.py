@@ -42,6 +42,21 @@ def before_all(context):
         context.test_db_name = 'mongrations_test'
         print(f"Fallback to local MongoDB: {context.mongodb_url}")
     
+    # Database and collection names for testing
+    # These should be used instead of hardcoded strings in step definitions
+    context.state_db_name = 'mongrations'  # Database for migration state tracking
+    context.fallback_db_name = 'test_db'  # Fallback DB used by some test migrations
+    
+    # Common collection names used in tests
+    context.test_collection_name = 'test_collection'
+    context.indexed_collection_name = 'indexed_collection'
+    context.source_collection_name = 'source_collection'
+    context.aggregated_collection_name = 'aggregated_collection'
+    context.new_schema_collection_name = 'new_schema_collection'
+    
+    # Field names commonly used in tests
+    context.default_index_field = 'name'
+    
     # Engine will be initialized by steps when needed
     context.engine = None
 
@@ -74,7 +89,7 @@ def before_scenario(context, scenario):
         # Clean mongrations state database
         try:
             client = pymongo.MongoClient(context.mongodb_url, serverSelectionTimeoutMS=5000)
-            client.drop_database('mongrations')
+            client.drop_database(context.state_db_name)
             client.close()
         except Exception as e:
             print(f"Warning: Could not clean mongrations state database: {e}")

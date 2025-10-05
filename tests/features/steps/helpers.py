@@ -24,14 +24,14 @@ def mongodb_client(context, database_name: Optional[str] = None):
             collection = db["my_collection"]
             collection.insert_one({"test": "data"})
     
-    Note: Uses context.test_db_name by default, or 'test_db' if not set.
-    However, test migrations hardcode 'test_db', so we check both databases.
+    Note: Uses context.test_db_name by default, or context.fallback_db_name if not set.
+    However, test migrations hardcode the fallback DB, so we check both databases.
     """
     client = None
     try:
         client = pymongo.MongoClient(context.mongodb_url, serverSelectionTimeoutMS=5000)
-        # Use test_db_name from context, fallback to 'test_db'
-        db_name = database_name or getattr(context, 'test_db_name', 'test_db')
+        # Use test_db_name from context, fallback to context.fallback_db_name
+        db_name = database_name or getattr(context, 'test_db_name', getattr(context, 'fallback_db_name', 'test_db'))
         yield client[db_name]
     finally:
         if client:
@@ -41,25 +41,27 @@ def mongodb_client(context, database_name: Optional[str] = None):
 def get_mongrations_state_db(context):
     """Get the mongrations state database."""
     client = pymongo.MongoClient(context.mongodb_url, serverSelectionTimeoutMS=5000)
-    return client["mongrations"]
+    state_db_name = getattr(context, 'state_db_name', 'mongrations')
+    return client[state_db_name]
 
 
 def collection_exists(context, collection_name: str, database: Optional[str] = None) -> bool:
     """
     Check if a collection exists in the database.
     
-    Checks both the configured test database and 'test_db' since
-    test migrations hardcode 'test_db' as the database name.
+    Checks both the configured test database and fallback DB since
+    test migrations hardcode the fallback DB as the database name.
     """
     # First check the specified/default database
-    db_name = database or getattr(context, 'test_db_name', 'test_db')
+    fallback_db = getattr(context, 'fallback_db_name', 'test_db')
+    db_name = database or getattr(context, 'test_db_name', fallback_db)
     with mongodb_client(context, db_name) as db:
         if collection_name in db.list_collection_names():
             return True
     
-    # Also check 'test_db' if it's different (migrations hardcode this)
-    if db_name != 'test_db':
-        with mongodb_client(context, 'test_db') as db:
+    # Also check fallback DB if it's different (migrations hardcode this)
+    if db_name != fallback_db:
+        with mongodb_client(context, fallback_db) as db:
             return collection_name in db.list_collection_names()
     
     return False
@@ -69,19 +71,20 @@ def get_collection_count(context, collection_name: str, database: Optional[str] 
     """
     Get the document count for a collection.
     
-    Checks both the configured test database and 'test_db' since
-    test migrations hardcode 'test_db' as the database name.
+    Checks both the configured test database and fallback DB since
+    test migrations hardcode the fallback DB as the database name.
     """
     # First try the specified/default database
-    db_name = database or getattr(context, 'test_db_name', 'test_db')
+    fallback_db = getattr(context, 'fallback_db_name', 'test_db')
+    db_name = database or getattr(context, 'test_db_name', fallback_db)
     with mongodb_client(context, db_name) as db:
         count = db[collection_name].count_documents({})
         if count > 0:
             return count
     
-    # Also try 'test_db' if it's different
-    if db_name != 'test_db':
-        with mongodb_client(context, 'test_db') as db:
+    # Also try fallback DB if it's different
+    if db_name != fallback_db:
+        with mongodb_client(context, fallback_db) as db:
             return db[collection_name].count_documents({})
     
     return 0
@@ -92,10 +95,11 @@ def insert_documents(context, collection_name: str, documents: List[Dict[str, An
     """
     Insert documents into a collection.
     
-    Uses 'test_db' by default since test migrations hardcode this database.
+    Uses fallback DB by default since test migrations hardcode this database.
     """
-    # Use 'test_db' by default to match where migrations write
-    db_name = database or 'test_db'
+    # Use fallback DB by default to match where migrations write
+    fallback_db = getattr(context, 'fallback_db_name', 'test_db')
+    db_name = database or fallback_db
     with mongodb_client(context, db_name) as db:
         if documents:
             db[collection_name].insert_many(documents)
@@ -115,7 +119,8 @@ def get_migration_status(context, migration_name: Optional[str] = None) -> Optio
     client = None
     try:
         client = pymongo.MongoClient(context.mongodb_url, serverSelectionTimeoutMS=5000)
-        state_db = client["mongrations"]
+        state_db_name = getattr(context, 'state_db_name', 'mongrations')
+        state_db = client[state_db_name]
         state_collection = state_db["state"]
         
         if migration_name:
@@ -131,7 +136,7 @@ def get_migration_status(context, migration_name: Optional[str] = None) -> Optio
 
 def verify_indexes_exist(context, collection_name: str, 
                         expected_fields: Optional[List[str]] = None,
-                        min_count: int = 2, database: str = "test_db") -> bool:
+                        min_count: int = 2, database: Optional[str] = None) -> bool:
     """
     Verify indexes exist on a collection.
     
@@ -140,12 +145,13 @@ def verify_indexes_exist(context, collection_name: str,
         collection_name: Name of the collection
         expected_fields: List of field names that should be indexed
         min_count: Minimum number of indexes expected (including _id)
-        database: Database name
+        database: Database name (uses context.fallback_db_name if not specified)
         
     Returns:
         True if verification passes
     """
-    with mongodb_client(context, database) as db:
+    db_name = database or getattr(context, 'fallback_db_name', 'test_db')
+    with mongodb_client(context, db_name) as db:
         collection = db[collection_name]
         indexes = list(collection.list_indexes())
         

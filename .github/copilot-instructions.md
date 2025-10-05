@@ -56,6 +56,7 @@ task mongodb:up     # Manually start test MongoDB (usually not needed)
     - When I run a migration creating background index
 - Instead, use the `I run the mongration "{mongration_file_path_with_extension}"` step.
 - Always run the tests by invoking `task test`. Do not run `behave` or `pytest` directly.
+- Do not use any kind of hardcoded string or configuration of any kind, use as databases names or collection names. Steps should always use the `context` object to store and retrieve such values. If you need to add a new value to the context object, do it in `tests/features/environment.py`.
 ### Debugging Tests
 1. Set breakpoint in code
 2. Run `task test:debug` (waits for debugger on 0.0.0.0:5678)

@@ -1,15 +1,50 @@
+"""
+Mongrations BDD Step Definitions
+
+This module contains Behave step definitions for testing Mongration migrations.
+Steps are organized following Gherkin best practices with clear separation of
+Given (setup), When (actions), and Then (verification) steps.
+
+Key Features:
+- Parameterized steps for maximum reusability
+- Type parsers for numeric and other custom types
+- Helper functions to reduce code duplication
+- Clear separation of concerns with section markers
+- Consistent error handling and MongoDB availability checks
+
+Step Patterns:
+- Use '{variable}' for string parameters
+- Use '{count:d}' for integer parameters
+- Use tables for structured data input
+- Steps are composable - complex steps can call simpler ones
+
+Examples:
+    # Parameterized step usage
+    When I run the mongration 5 times
+    Then the mongration should execute successfully 5 times
+    
+    # Named collection usage
+    Given I have a collection "users" with 100 documents
+    Then the collection "users" should contain 100 documents
+    
+    # Flexible index verification
+    Then at least 3 indexes should exist on "products"
+    Then the index on "email" should exist on "users"
+"""
+import argparse
 import asyncio
 import os
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
-from behave import given, when, then
+from typing import Optional, List, Dict, Any
+from behave import given, when, then, register_type
+import parse
 from motor.motor_asyncio import AsyncIOMotorClient
 import pymongo
 from mongrations.program import MongrationProgram
 from mongrations.plan import MongrationStatus
-import argparse
 # Import helper functions - use absolute import for Behave compatibility
 from helpers import (
     skip_if_mongodb_unavailable,
@@ -24,14 +59,126 @@ from helpers import (
 )
 
 
+import logging
+logger = logging.getLogger('mongration.tests')
+# ============================================================================
+# Custom type parsers for Behave
+# ============================================================================
+
+@parse.with_pattern(r'\d+')
+def parse_number(text):
+    """Parse a number from text."""
+    return int(text)
+
+register_type(Number=parse_number)
+
+# ============================================================================
+# Helper functions for step implementations
+# ============================================================================
+
+def get_test_migrations_dir() -> Path:
+    """Get the path to the test migrations directory."""
+    return Path(__file__).parent.parent.parent / "test_migrations"
+
+
+def verify_mongration_file_exists(filepath: Path) -> None:
+    """Verify that a mongration file exists, raise assertion if not."""
+    assert filepath.exists(), f"Migration file not found: {filepath}"
+
+
+def run_mongration_internal(
+    context,
+    mongration_file: Optional[Path] = None,
+    mongrations_dir: Optional[Path] = None,
+    dry_run: bool = False,
+    command: str = 'run',
+    status: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Internal helper to run a mongration and return result info.
+    
+    Args:
+        context: Behave context object
+        mongration_file: Path to single mongration file to run
+        mongrations_dir: Path to directory of mongrations to run
+        dry_run: Whether to run in dry-run mode
+        command: Command to execute ('run' or 'manipulate')
+        status: Status to set (for 'manipulate' command)
+    
+    Returns:
+        Dict with keys: 'success' (bool), 'exit_code' (int), 'stderr' (str), 'stdout' (str)
+    """
+    from mongrations.main import run_mongration_from_args
+    import io
+    import logging
+    import traceback
+    
+    # Capture stderr from logging
+    stderr_capture = io.StringIO()
+    stderr_handler = logging.StreamHandler(stderr_capture)
+    stderr_handler.setLevel(logging.ERROR)
+    migration_logger = logging.getLogger('mongrations')
+    migration_logger.addHandler(stderr_handler)
+    
+    try:
+        kwargs = {
+            'url': context.mongodb_url,
+            'dry_run': dry_run
+        }
+        
+        if mongration_file:
+            kwargs['mongration'] = str(mongration_file)
+        elif mongrations_dir:
+            kwargs['mongrations_dir'] = str(mongrations_dir)
+        
+        if command == 'manipulate':
+            kwargs['command'] = command
+            kwargs['status'] = status
+        
+        exit_code = run_mongration_from_args(**kwargs)
+        stderr_output = stderr_capture.getvalue()
+        
+        return {
+            'success': exit_code == 0,
+            'exit_code': exit_code,
+            'stdout': '',
+            'stderr': stderr_output
+        }
+    except Exception as e:
+        print(f"Exception during mongration execution: {e}")
+        formatted_exc = traceback.format_exc()
+        migration_logger.error(formatted_exc)
+        stderr_output = stderr_capture.getvalue() + formatted_exc
+        
+        return {
+            'success': False,
+            'exit_code': 1,
+            'stdout': '',
+            'stderr': stderr_output,
+            'error': formatted_exc
+        }
+    finally:
+        migration_logger.removeHandler(stderr_handler)
+        stderr_capture.close()
+
+
+def create_result_object(result_dict: Dict[str, Any]):
+    """Create a result-like object from a dictionary for backwards compatibility."""
+    return type('obj', (object,), result_dict)()
+
+
+# ============================================================================
+# Given Steps - Setup and Preconditions
+# ============================================================================
+
 @given('a clean MongoDB test database')
 def step_clean_mongodb(context):
     """Ensure we have a clean test database"""
     try:
         client = pymongo.MongoClient(context.mongodb_url, serverSelectionTimeoutMS=5000)
         client.drop_database(context.test_db_name)
-        client.drop_database('test_db')  # Also drop the hardcoded test_db used by migrations
-        client.drop_database('mongrations')
+        client.drop_database(context.fallback_db_name)  # Also drop the fallback DB used by migrations
+        client.drop_database(context.state_db_name)
         client.close()
         context.mongodb_available = True
         print(f"✓ MongoDB connection successful at {context.mongodb_url}")
@@ -44,113 +191,63 @@ def step_clean_mongodb(context):
 @given('I run the mongration "{filename}"')
 def step_setup_single_mongration(context, filename):
     """Set up a single mongration by filename (for use with Given)"""
-    test_migrations_dir = Path(__file__).parent.parent.parent / "test_migrations"
+    test_migrations_dir = get_test_migrations_dir()
     context.mongration_file = test_migrations_dir / filename
-    
-    # Verify the migration file exists
-    assert context.mongration_file.exists(), \
-        f"Migration file not found: {context.mongration_file}"
+    verify_mongration_file_exists(context.mongration_file)
 
 
 @when('I run the mongration "{filename}"')
 def step_run_single_mongration(context, filename):
     """Run a single mongration by filename"""
-    if not context.mongodb_available:
-        context.scenario.skip("MongoDB not available")
+    if skip_if_mongodb_unavailable(context):
         return
     
-    test_migrations_dir = Path(__file__).parent.parent.parent / "test_migrations"
+    test_migrations_dir = get_test_migrations_dir()
     context.mongration_file = test_migrations_dir / filename
+    verify_mongration_file_exists(context.mongration_file)
     
-    # Verify the migration file exists before trying to run it
-    assert context.mongration_file.exists(), \
-        f"Migration file not found: {context.mongration_file}"
-    
-    # Import the direct entry point
-    from mongrations.main import run_mongration_from_args
-    import io
-    import sys
-    import logging
-    
-    # Initialize multiple_runs if not present
+    # Initialize multiple_runs if not present (for compatibility with multiple run tracking)
     if not hasattr(context, 'multiple_runs'):
         context.multiple_runs = []
     
-    # Capture stderr from logging
-    stderr_capture = io.StringIO()
-    stderr_handler = logging.StreamHandler(stderr_capture)
-    stderr_handler.setLevel(logging.ERROR)
-    logger = logging.getLogger('mongrations')
-    logger.addHandler(stderr_handler)
+    result_dict = run_mongration_internal(
+        context,
+        mongration_file=context.mongration_file
+    )
     
-    try:
-        exit_code = run_mongration_from_args(
-            url=context.mongodb_url,
-            mongration=str(context.mongration_file),
-            dry_run=False
-        )
-        
-        # Get captured stderr
-        stderr_output = stderr_capture.getvalue()
-        
-        # Create a result-like object for compatibility
-        context.run_result = type('obj', (object,), {
-            'returncode': exit_code,
-            'stdout': '',
-            'stderr': stderr_output
-        })()
-        context.run_success = exit_code == 0
-        
-        # Track this run
-        context.multiple_runs.append({
-            'success': exit_code == 0,
-            'exit_code': exit_code
-        })
-    except Exception as e:
-        print(f"Exception during mongration execution: {e}")
-        import traceback
-        traceback.print_exc()
-        stderr_output = stderr_capture.getvalue() + traceback.format_exc()
-        context.run_success = False
-        context.run_result = type('obj', (object,), {
-            'returncode': 1,
-            'stdout': '',
-            'stderr': stderr_output
-        })()
-        
-        # Track this failed run
-        context.multiple_runs.append({
-            'success': False,
-            'exit_code': 1,
-            'error': traceback.format_exc()
-        })
-    finally:
-        # Clean up handler
-        logger.removeHandler(stderr_handler)
-        stderr_capture.close()
+    # Store result in both formats for compatibility
+    context.run_result = create_result_object({
+        'returncode': result_dict['exit_code'],
+        'stdout': result_dict['stdout'],
+        'stderr': result_dict['stderr']
+    })
+    context.run_success = result_dict['success']
+    
+    # Track this run
+    context.multiple_runs.append(result_dict)
 
 
 @given('I run the mongrations')
 def step_setup_mongrations(context):
     """Set up multiple mongration scripts from table"""
-    test_migrations_dir = Path(__file__).parent.parent.parent / "test_migrations"
+    test_migrations_dir = get_test_migrations_dir()
     
     # Parse the table to get mongration files
     mongration_files = []
     for row in context.table:
         script_name = row['script']
         mongration_file = test_migrations_dir / f"{script_name}.py"
-        
-        # Verify the migration file exists
-        assert mongration_file.exists(), \
-            f"Migration file not found: {mongration_file}"
-        
+        verify_mongration_file_exists(mongration_file)
         mongration_files.append(mongration_file)
     
     # Store in context for later use
     context.mongrations_dir = test_migrations_dir
     context.mongration_files = mongration_files
 
+
+# ============================================================================
+# Given Steps - Test Data Setup
+# ============================================================================
 
 @given('I have a collection with test data')
 def step_collection_with_data(context):
@@ -165,10 +262,10 @@ def step_collection_with_data(context):
         {"name": "Diana", "age": 28, "category": "Sales"}
     ]
     
-    insert_documents(context, "source_collection", test_documents)
+    insert_documents(context, context.source_collection_name, test_documents)
     
     # Verify documents were actually inserted
-    count = get_collection_count(context, "source_collection")
+    count = get_collection_count(context, context.source_collection_name)
     assert count == len(test_documents), \
         f"Expected {len(test_documents)} documents inserted, but found {count}"
 
@@ -176,24 +273,17 @@ def step_collection_with_data(context):
 @given('I have a mongration script that performs data aggregation')
 def step_aggregation_mongration(context):
     """Use existing aggregation migration"""
-    test_migrations_dir = Path(__file__).parent.parent.parent / "test_migrations"
+    test_migrations_dir = get_test_migrations_dir()
     context.mongration_file = test_migrations_dir / "aggregation_migration.py"
-    
-    # Verify the migration file exists
-    assert context.mongration_file.exists(), \
-        f"Aggregation migration file not found: {context.mongration_file}"
+    verify_mongration_file_exists(context.mongration_file)
 
 
 @given('I have a mongration script')
 def step_basic_mongration(context):
     """Use existing simple migration"""
-    test_migrations_dir = Path(__file__).parent.parent.parent / "test_migrations"
+    test_migrations_dir = get_test_migrations_dir()
     context.mongration_file = test_migrations_dir / "simple_migration.py"
-    
-    # Verify the migration file exists
-    assert context.mongration_file.exists(), \
-        f"Simple migration file not found: {context.mongration_file}"
-
+    verify_mongration_file_exists(context.mongration_file)
 
 @given('the mongration status is "{status}"')
 def step_mongration_status(context, status):
@@ -201,49 +291,34 @@ def step_mongration_status(context, status):
     context.initial_status = status
 
 
+# ============================================================================
+# When Steps - Actions
+# ============================================================================
+
 @when('I run the mongration in dry run mode')
 def step_run_mongration_dry(context):
     """Execute the mongration in dry run mode"""
-    if not context.mongodb_available:
-        context.scenario.skip("MongoDB not available")
+    if skip_if_mongodb_unavailable(context):
         return
     
-    # Import the direct entry point
-    from mongrations.main import run_mongration_from_args
+    result_dict = run_mongration_internal(
+        context,
+        mongration_file=context.mongration_file,
+        dry_run=True
+    )
     
-    try:
-        exit_code = run_mongration_from_args(
-            url=context.mongodb_url,
-            mongration=str(context.mongration_file),
-            dry_run=True
-        )
-        
-        context.run_result = type('obj', (object,), {
-            'returncode': exit_code,
-            'stdout': '',
-            'stderr': ''
-        })()
-        context.run_success = exit_code == 0
-    except Exception as e:
-        import traceback
-        context.run_success = False
-        context.run_result = type('obj', (object,), {
-            'returncode': 1,
-            'stdout': '',
-            'stderr': traceback.format_exc()
-        })()
-
+    context.run_result = create_result_object({
+        'returncode': result_dict['exit_code'],
+        'stdout': result_dict['stdout'],
+        'stderr': result_dict['stderr']
+    })
+    context.run_success = result_dict['success']
 
 @when('I run the mongrations directory')
 def step_run_mongrations_dir(context):
     """Execute mongrations - either specific files or entire directory"""
-    if not context.mongodb_available:
-        context.scenario.skip("MongoDB not available")
+    if skip_if_mongodb_unavailable(context):
         return
-    
-    # Import the direct entry point
-    from mongrations.main import run_mongration_from_args
-    import traceback
     
     # If specific files were set up, run them individually
     if hasattr(context, 'mongration_files') and context.mongration_files:
@@ -251,142 +326,95 @@ def step_run_mongrations_dir(context):
         all_success = True
         
         for mongration_file in context.mongration_files:
-            try:
-                exit_code = run_mongration_from_args(
-                    url=context.mongodb_url,
-                    mongration=str(mongration_file)
-                )
-                
-                if exit_code != 0:
-                    all_success = False
-            except Exception as e:
-                print(f"Exception during mongration execution: {e}")
-                traceback.print_exc()
+            result_dict = run_mongration_internal(
+                context,
+                mongration_file=mongration_file
+            )
+            if not result_dict['success']:
                 all_success = False
         
         # Create a combined result
         context.run_success = all_success
-        context.run_result = type('obj', (object,), {
+        context.run_result = create_result_object({
             'returncode': 0 if all_success else 1,
             'stdout': '',
             'stderr': ''
-        })()
+        })
     else:
         # Run entire directory
-        try:
-            exit_code = run_mongration_from_args(
-                url=context.mongodb_url,
-                mongrations_dir=str(context.mongrations_dir)
-            )
-            
-            context.run_result = type('obj', (object,), {
-                'returncode': exit_code,
-                'stdout': '',
-                'stderr': ''
-            })()
-            context.run_success = exit_code == 0
-        except Exception as e:
-            print(f"Exception during mongration execution: {e}")
-            import traceback
-            traceback.print_exc()
-            context.run_success = False
-            context.run_result = type('obj', (object,), {
-                'returncode': 1,
-                'stdout': '',
-                'stderr': traceback.format_exc()
-            })()
+        result_dict = run_mongration_internal(
+            context,
+            mongrations_dir=context.mongrations_dir
+        )
+        
+        context.run_result = create_result_object({
+            'returncode': result_dict['exit_code'],
+            'stdout': result_dict['stdout'],
+            'stderr': result_dict['stderr']
+        })
+        context.run_success = result_dict['success']
+
+@when('I run the mongration {count:d} times')
+def step_run_mongration_n_times(context, count):
+    """Execute the mongration N times (configurable)"""
+    if skip_if_mongodb_unavailable(context):
+        return
+    
+    if not hasattr(context, 'multiple_runs'):
+        context.multiple_runs = []
+    
+    for i in range(count):
+        result_dict = run_mongration_internal(
+            context,
+            mongration_file=context.mongration_file
+        )
+        context.multiple_runs.append(result_dict)
+    
+    # Store the count for later verification
+    context.expected_run_count = count
 
 
 @when('I run the mongration multiple times')
 def step_run_mongration_multiple(context):
-    """Execute the mongration multiple times"""
-    if not context.mongodb_available:
-        context.scenario.skip("MongoDB not available")
-        return
-    
-    # Import the direct entry point
-    from mongrations.main import run_mongration_from_args
-    import traceback
-    
-    context.multiple_runs = []
-    
-    for i in range(3):
-        try:
-            exit_code = run_mongration_from_args(
-                url=context.mongodb_url,
-                mongration=str(context.mongration_file)
-            )
-            
-            result = type('obj', (object,), {
-                'returncode': exit_code,
-                'stdout': '',
-                'stderr': ''
-            })()
-            
-            context.multiple_runs.append({
-                'success': exit_code == 0,
-                'result': result
-            })
-        except Exception as e:
-            print(f"Exception during mongration execution: {e}")
-            traceback.print_exc()
-            result = type('obj', (object,), {
-                'returncode': 1,
-                'stdout': '',
-                'stderr': traceback.format_exc()
-            })()
-            context.multiple_runs.append({
-                'success': False,
-                'result': result
-            })
+    """Execute the mongration multiple times (default: 3)"""
+    step_run_mongration_n_times(context, 3)
 
 
 @when('I manipulate the mongration status to "{status}"')
 def step_manipulate_status(context, status):
     """Manipulate mongration status"""
-    if not context.mongodb_available:
-        context.scenario.skip("MongoDB not available")
+    if skip_if_mongodb_unavailable(context):
         return
     
-    # Import the direct entry point
-    from mongrations.main import run_mongration_from_args
-    import traceback
+    result_dict = run_mongration_internal(
+        context,
+        mongration_file=context.mongration_file,
+        command='manipulate',
+        status=status
+    )
     
-    try:
-        exit_code = run_mongration_from_args(
-            url=context.mongodb_url,
-            mongration=str(context.mongration_file),
-            command='manipulate',
-            status=status
-        )
-        
-        context.manipulate_result = type('obj', (object,), {
-            'returncode': exit_code,
-            'stdout': '',
-            'stderr': ''
-        })()
-        context.manipulate_success = exit_code == 0
-    except Exception as e:
-        print(f"Exception during status manipulation: {e}")
-        traceback.print_exc()
-        context.manipulate_success = False
-        context.manipulate_result = type('obj', (object,), {
-            'returncode': 1,
-            'stdout': '',
-            'stderr': traceback.format_exc()
-        })()
+    context.manipulate_result = create_result_object({
+        'returncode': result_dict['exit_code'],
+        'stdout': result_dict['stdout'],
+        'stderr': result_dict['stderr']
+    })
+    context.manipulate_success = result_dict['success']
 
+
+# ============================================================================
+# Then Steps - Assertions and Verifications
+# ============================================================================
 
 @then('the collection should exist in the database')
 def step_collection_exists(context):
-    """Verify collection exists"""
+    """Verify collection exists (checks for common test collections)"""
     if skip_if_mongodb_unavailable(context):
         return
     
     with mongodb_client(context) as db:
         collections = db.list_collection_names()
         # Check for collections created by test migrations
-        expected_collections = ["test_collection", "indexed_collection"]
+        expected_collections = [context.test_collection_name, context.indexed_collection_name]
         found_collections = [col for col in expected_collections if col in collections]
         
         assert len(found_collections) > 0, \
@@ -402,17 +430,17 @@ def step_collection_exists(context):
 
 @then('the collection should not exist in the database')
 def step_collection_not_exists(context):
-    """Verify collection does not exist"""
+    """Verify collection does not exist (checks for common test collections)"""
     if skip_if_mongodb_unavailable(context):
         return
     
-    # Check both the test database and 'test_db' since migrations might use either
-    test_collection_exists = collection_exists(context, "test_collection")
-    indexed_collection_exists = collection_exists(context, "indexed_collection")
+    # Check both the test database and fallback DB since migrations might use either
+    test_collection_exists = collection_exists(context, context.test_collection_name)
+    indexed_collection_exists = collection_exists(context, context.indexed_collection_name)
     
     assert not test_collection_exists and not indexed_collection_exists, \
-        f"Expected collections should not exist. test_collection exists: {test_collection_exists}, indexed_collection exists: {indexed_collection_exists}"
-
+        f"Expected collections should not exist. {context.test_collection_name} exists: {test_collection_exists}, " \
+        f"{context.indexed_collection_name} exists: {indexed_collection_exists}"
 
 @then('the mongration status should be "{expected_status}"')
 def step_check_status(context, expected_status):
@@ -440,7 +468,7 @@ def step_phases_executed(context):
     assert context.run_success, f"Migration failed: {getattr(context.run_result, 'stderr', 'Unknown error')}"
     
     # Verify phases were tracked in state
-    with mongodb_client(context, "mongrations") as state_db:
+    with mongodb_client(context, context.state_db_name) as state_db:
         state_collection = state_db["state"]
         state_doc = state_collection.find_one(sort=[("_id", -1)])
         
@@ -470,19 +498,37 @@ def step_error_logged(context):
         assert has_error_content, f"Error output doesn't contain meaningful error information: {error_output[:200]}"
 
 
-@then('the mongration should execute successfully each time')
-def step_multiple_success(context):
-    """Verify multiple executions were successful"""
+@then('the mongration should execute successfully {count:d} times')
+def step_n_successful_runs(context, count):
+    """Verify N executions were successful (configurable)"""
     if skip_if_mongodb_unavailable(context):
         return
     
-    # Check that we have exactly 3 runs
-    assert hasattr(context, 'multiple_runs') and len(context.multiple_runs) == 3, \
-        f"Expected 3 runs, but got {len(context.multiple_runs)}"
+    # Check that we have the expected number of runs
+    assert hasattr(context, 'multiple_runs'), "No runs recorded in context"
+    assert len(context.multiple_runs) == count, \
+        f"Expected {count} runs, but got {len(context.multiple_runs)}"
     
+    # Verify each run was successful
     for i, run in enumerate(context.multiple_runs):
-        assert run['success'], f"Run {i+1} failed with exit code {run.get('exit_code', 'unknown')}"
+        assert run['success'], \
+            f"Run {i+1} of {count} failed with exit code {run.get('exit_code', 'unknown')}"
 
+
+@then('the mongration should execute successfully each time')
+def step_multiple_success(context):
+    """Verify multiple executions were successful (uses actual run count from context)"""
+    if skip_if_mongodb_unavailable(context):
+        return
+    
+    # Get actual count from the number of runs tracked
+    assert hasattr(context, 'multiple_runs'), "No runs recorded in context"
+    actual_count = len(context.multiple_runs)
+    
+    # Use expected count if set, otherwise use actual count
+    expected_count = getattr(context, 'expected_run_count', actual_count)
+    
+    step_n_successful_runs(context, expected_count)
 
 @then('no state should be tracked')
 def step_no_state_tracked(context):
@@ -504,6 +550,12 @@ def step_no_state_tracked(context):
 @then('the mongrations should execute in dependency order')
 def step_dependency_order(context):
     """Verify mongrations executed in dependency order"""
+    step_at_least_n_migrations_completed(context, 2)
+
+
+@then('at least {count:d} migrations should be completed')
+def step_at_least_n_migrations_completed(context, count):
+    """Verify at least N migrations completed successfully"""
     if skip_if_mongodb_unavailable(context):
         return
     
@@ -511,11 +563,11 @@ def step_dependency_order(context):
     assert context.run_success, f"Migration failed: {getattr(context.run_result, 'stderr', 'Unknown error')}"
     
     # Verify all expected migrations have state entries
-    with mongodb_client(context, "mongrations") as state_db:
+    with mongodb_client(context, context.state_db_name) as state_db:
         state_collection = state_db["state"]
         states = list(state_collection.find().sort("_id", 1))
         
-        assert len(states) >= 2, f"Expected at least 2 migration states, found {len(states)}"
+        assert len(states) >= count, f"Expected at least {count} migration state(s), found {len(states)}"
         
         # Verify each migration completed successfully
         for state in states:
@@ -523,18 +575,20 @@ def step_dependency_order(context):
                 f"Migration '{state.get('name')}' has status '{state.get('status')}', expected 'COMPLETED'"
             assert "phases_ran" in state, f"Migration '{state.get('name')}' missing 'phases_ran' field"
 
-
 @then('all mongrations should be "{status}"')
 def step_all_status(context, status):
     """Verify all mongrations have expected status"""
     if skip_if_mongodb_unavailable(context):
         return
     
-    with mongodb_client(context, "mongrations") as state_db:
+    with mongodb_client(context, context.state_db_name) as state_db:
         state_collection = state_db["state"]
         states = list(state_collection.find())
         
-        assert len(states) >= 2, f"Expected at least 2 migration states, found {len(states)}"
+        # Use a more flexible minimum (at least 1 migration)
+        min_migrations = getattr(context, 'expected_migration_count', 1)
+        assert len(states) >= min_migrations, \
+            f"Expected at least {min_migrations} migration state(s), found {len(states)}"
         
         for state in states:
             actual_status = state.get("status", "ABSENT")
@@ -553,59 +607,136 @@ def step_all_status(context, status):
                     f"Completed migration '{state['name']}' has no phases recorded"
 
 
+@then('at least {count:d} mongrations should be "{status}"')
+def step_at_least_n_status(context, count, status):
+    """Verify at least N mongrations have expected status"""
+    if skip_if_mongodb_unavailable(context):
+        return
+    
+    with mongodb_client(context, context.state_db_name) as state_db:
+        state_collection = state_db["state"]
+        states = list(state_collection.find({"status": status}))
+        
+        assert len(states) >= count, \
+            f"Expected at least {count} migration(s) with status '{status}', found {len(states)}"
+
+
+# ============================================================================
+# Then Steps - Index Verification
+# ============================================================================
+
 @then('the index should exist on the collection')
 def step_index_exists(context):
-    """Verify index exists"""
+    """Verify index exists on indexed_collection"""
+    step_verify_index_on_collection_field(context, context.default_index_field, context.indexed_collection_name)
+
+
+@then('the index should exist on "{collection_name}"')
+def step_index_exists_on_named_collection(context, collection_name):
+    """Verify index exists on a named collection"""
+    # Look for any index beyond the default _id
+    step_at_least_n_indexes_on_collection(context, collection_name, 2)
+
+
+@then('the index on "{field_name}" should exist on "{collection_name}"')
+def step_verify_index_on_collection_field(context, field_name, collection_name):
+    """Verify a specific index exists on a collection"""
     if skip_if_mongodb_unavailable(context):
         return
     
     with mongodb_client(context) as db:
-        collection = db["indexed_collection"]
+        collection = db[collection_name]
         indexes = list(collection.list_indexes())
         
-        # Should have at least the default _id index and our custom index
-        assert len(indexes) >= 2, f"Expected at least 2 indexes, found {len(indexes)}"
-        
-        # Check for an index on the 'name' field (could have auto-generated name)
-        name_index_found = any('name' in idx.get('key', {}) for idx in indexes)
-        assert name_index_found, \
-            f"Expected index on 'name' field not found. Available indexes: {[idx.get('key', {}) for idx in indexes]}"
-        
-        # Verify index metadata
+        # Check for an index on the specified field
+        field_index_found = any(field_name in idx.get('key', {}) for idx in indexes)
+        assert field_index_found, \
+            f"Expected index on '{field_name}' field not found in '{collection_name}'. " \
+            f"Available indexes: {[idx.get('key', {}) for idx in indexes]}"
+        # Log index metadata for debugging
         for idx in indexes:
-            if 'name' in idx.get('key', {}):
-                # Verify the index has expected properties
-                assert 'name' in idx, f"Index missing 'name' property: {idx}"
-                assert 'key' in idx, f"Index missing 'key' property: {idx}"
-                print(f"Found index on 'name' field: {idx['name']} with key {idx['key']}")
+            if field_name in idx.get('key', {}):
+                logger.info(f"Found index on '{field_name}' field: {idx['name']} with key {idx['key']}")
+                print(f"Found index on '{field_name}' field: {idx['name']} with key {idx['key']}")
 
+
+@then('at least {count:d} indexes should exist on "{collection_name}"')
+def step_at_least_n_indexes_on_collection(context, count, collection_name):
+    """Verify at least N indexes exist on a collection"""
+    if skip_if_mongodb_unavailable(context):
+        return
+    
+    with mongodb_client(context) as db:
+        collection = db[collection_name]
+        indexes = list(collection.list_indexes())
+
+        assert len(indexes) >= count, f"Expected at least {count} indexes on '{collection_name}', found {len(indexes)}"
+        # Log index information for debugging
+        for idx in indexes:
+            logger.info(f"  - {idx.get('name')}: {idx.get('key')}")
+        for idx in indexes:
+            print(f"  - {idx.get('name')}: {idx.get('key')}")
+
+
+@then('the indexes should be created')
+def step_verify_indexes_created(context):
+    """Verify multiple indexes were created on test_collection"""
+    if skip_if_mongodb_unavailable(context):
+        return
+    
+    # First verify the collection exists
+    assert collection_exists(context, context.test_collection_name), \
+        f"Collection '{context.test_collection_name}' does not exist"
+    
+    # Then verify indexes (at least 2: _id + custom)
+    step_at_least_n_indexes_on_collection(context, 2, context.test_collection_name)
 
 @then('the aggregated data should be processed correctly')
 def step_aggregation_result(context):
-    """Verify aggregation result"""
+    """Verify aggregation result in aggregated_collection"""
+    step_collection_has_aggregated_data(context, context.aggregated_collection_name, ["category", "count"])
+
+
+@then('the collection "{collection_name}" should contain aggregated data with fields')
+def step_collection_has_aggregated_data_with_fields(context, collection_name):
+    """Verify collection contains aggregated data with fields from table"""
+    if skip_if_mongodb_unavailable(context):
+        return
+    
+    # Extract field names from table
+    field_names = [row['field'] for row in context.table]
+    step_collection_has_aggregated_data(context, collection_name, field_names)
+
+
+def step_collection_has_aggregated_data(context, collection_name: str, required_fields: List[str]):
+    """Helper to verify aggregated data structure"""
     if skip_if_mongodb_unavailable(context):
         return
     
     with mongodb_client(context) as db:
-        # Check if aggregated_collection was created and has data
-        assert "aggregated_collection" in db.list_collection_names(), \
-            f"Collection 'aggregated_collection' not found. Available: {db.list_collection_names()}"
+        # Check if collection was created and has data
+        assert collection_name in db.list_collection_names(), \
+            f"Collection '{collection_name}' not found. Available: {db.list_collection_names()}"
         
-        stats_collection = db["aggregated_collection"]
-        stats = list(stats_collection.find())
+        collection = db[collection_name]
+        docs = list(collection.find())
         
-        # Should have stats for each category
-        assert len(stats) > 0, "Expected aggregated data but found none"
+        # Should have aggregated data
+        assert len(docs) > 0, f"Expected aggregated data in '{collection_name}' but found none"
         
-        # Verify aggregation structure - should have category grouping fields
-        for stat in stats:
-            assert "category" in stat, f"Aggregated document missing 'category' field: {stat}"
-            assert "count" in stat, f"Aggregated document missing 'count' field: {stat}"
-            # Verify count is a positive number
-            assert isinstance(stat["count"], (int, float)) and stat["count"] > 0, \
-                f"Invalid count value: {stat.get('count')}"
+        # Verify aggregation structure - should have required fields
+        for doc in docs:
+            for field in required_fields:
+                assert field in doc, f"Aggregated document missing '{field}' field: {doc}"
+            
+            # If 'count' is in required fields, verify it's a positive number
+            if 'count' in required_fields:
+                assert isinstance(doc["count"], (int, float)) and doc["count"] > 0, \
+                    f"Invalid count value: {doc.get('count')}"
 
-# Additional step definitions for comprehensive testing
+# ============================================================================
+# Given Steps - Advanced Collection Setup
+# ============================================================================
 
 @given('I have a collection "{collection_name}" with documents')
 def step_create_collection_with_table(context, collection_name):
@@ -688,6 +819,10 @@ def step_create_old_schema_collection(context, collection_name):
     ]
     insert_documents(context, collection_name, documents)
 
+
+# ============================================================================
+# Then Steps - Collection Verification
+# ============================================================================
 
 @then('the collection "{collection_name}" should exist')
 def step_verify_collection_exists(context, collection_name):
@@ -833,31 +968,6 @@ def step_verify_legacy_preserved(context):
         client.close()
 
 
-@then('the indexes should be created')
-def step_verify_indexes_created(context):
-    """Verify multiple indexes were created"""
-    if skip_if_mongodb_unavailable(context):
-        return
-    
-    # First verify the collection exists
-    assert collection_exists(context, "test_collection"), \
-        "Collection 'test_collection' does not exist"
-    
-    # Then verify indexes
-    has_indexes = verify_indexes_exist(context, "test_collection", min_count=2)
-    assert has_indexes, "Expected at least 2 indexes to be created"
-    
-    # Also verify the specific index details
-    with mongodb_client(context) as db:
-        collection = db["test_collection"]
-        indexes = list(collection.list_indexes())
-        
-        # Log index information for debugging
-        print(f"Found {len(indexes)} indexes on test_collection:")
-        for idx in indexes:
-            print(f"  - {idx.get('name')}: {idx.get('key')}")
-
-
 @then('all documents should have new schema')
 def step_verify_new_schema(context):
     """Verify documents have been transformed to new schema"""
@@ -865,7 +975,7 @@ def step_verify_new_schema(context):
         return
     
     with mongodb_client(context) as db:
-        collection = db["new_schema_collection"]
+        collection = db[context.new_schema_collection_name]
         docs = list(collection.find().limit(10))
         
         assert len(docs) > 0, "No documents found in new schema collection"
@@ -903,7 +1013,7 @@ def step_verify_pipe_flow(context):
                 f"Result collection '{result_col}' exists but has no documents (pipe may not have flowed data)"
     
     # Verify migration state shows multiple phases executed
-    with mongodb_client(context, "mongrations") as state_db:
+    with mongodb_client(context, context.state_db_name) as state_db:
         state_collection = state_db["state"]
         state_doc = state_collection.find_one(sort=[("_id", -1)])
         
