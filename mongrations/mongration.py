@@ -62,7 +62,8 @@ class Mongration:
                               try {
                                 return UUID(id);
                               } catch (exception)  {
-                                print("Exception caught with _id: " + id + " - Error: " + e.message);
+                                print("Exception caught with _id: " + id + " - Error: " + exception.toString());
+                                throw exception;
                               }
                             }
                             """,
@@ -88,6 +89,8 @@ class Mongration:
             },
         ]
         )
+        # Make copy_phase wait for convert_phase to avoid concurrent writes to the same collection
+        copy_phase.wait_for_phase(convert_phase)
         copy_phase.into_collection("mongrations", tmp_collection_name)
         overwrite_phase = self.phase("Overwrite collection")
         overwrite_phase.wait_for_phase(convert_phase)

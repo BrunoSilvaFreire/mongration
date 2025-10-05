@@ -56,7 +56,11 @@ hs_err_pid*
 replay_pid*
 
 .venv
-tests/tests/reports
+tests/reports
 tests/graphs
 .task
 **/*.output
+htmlcov/
+.coverage
+coverage.json
+*.coverage

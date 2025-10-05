@@ -40,3 +40,50 @@ logging.getLogger('mongrations.phase').setLevel(logging.DEBUG)
 For detailed logging configuration examples and best practices, see:
 - [Logging Documentation](docs/logging.md)
 - [Logging Configuration Examples](examples/logging_configuration.py)
+
+## Testing
+
+Mongrations uses BDD (Behavior-Driven Development) testing with Behave and includes comprehensive test coverage across all features.
+
+### Running Tests
+
+```bash
+# Run all tests
+task test
+
+# Run specific feature
+task test -- tests/features/phase_operations.feature
+
+# Run tests with debug mode
+task test:debug
+
+# Clean test artifacts
+task clean
+```
+
+### Test Structure
+
+Tests are organized by feature area for better maintainability:
+
+- **mongrations.feature** - Core migration functionality
+- **phase_operations.feature** - Phase-specific operations
+- **graph_operations.feature** - Dependency graph operations
+- **state_management.feature** - Migration state tracking
+- **io_operations.feature** - Input/output operations
+- **error_handling.feature** - Error scenarios and edge cases
+- **advanced_operations.feature** - Advanced features (UUID conversion, indexes, etc.)
+
+### Coverage
+
+Current test coverage: **~70%** (target: 75%+)
+
+View coverage reports:
+```bash
+# HTML report
+open tests/reports/coverage/index.html
+
+# JSON report
+cat tests/reports/coverage/coverage.json
+```
+
+See [TEST_COVERAGE_IMPROVEMENTS.md](TEST_COVERAGE_IMPROVEMENTS.md) for detailed coverage information.

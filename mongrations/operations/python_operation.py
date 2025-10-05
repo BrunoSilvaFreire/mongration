@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from typing import AsyncIterable
 
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -6,6 +7,8 @@ from tqdm import tqdm
 
 from mongrations.io.pipe import Pipe
 from mongrations.operations.operation import Operation
+
+logger = logging.getLogger(__name__)
 
 
 class AbstractPythonOperation(Operation):
@@ -65,13 +68,21 @@ class DocumentPythonOperation(AbstractPythonOperation):
     async def _iterate(self, client, phase, progress):
         source = phase.source()
         destination = phase.destination()
+        logger.debug(f"DocumentPythonOperation._iterate: Getting cursor from source {source}")
         cursor, estimated_total = await source.cursor(client)
+        logger.debug(f"DocumentPythonOperation._iterate: Got cursor, estimated_total={estimated_total}")
         progress.total = estimated_total
 
+        logger.debug(f"DocumentPythonOperation._iterate: Calling hint_total({estimated_total}) on destination {destination}")
         destination.hint_total(estimated_total)
+        logger.debug(f"DocumentPythonOperation._iterate: Starting to iterate over cursor")
+        doc_count = 0
         async for doc in cursor:
+            doc_count += 1
+            logger.debug(f"DocumentPythonOperation._iterate: Processing document #{doc_count}")
             yield self._block(doc)
             progress.update()
+        logger.debug(f"DocumentPythonOperation._iterate: Finished iterating, processed {doc_count} documents")
 
 
 class GeneratorPythonOperation(AbstractPythonOperation):
@@ -85,16 +96,22 @@ class GeneratorPythonOperation(AbstractPythonOperation):
     async def _iterate(self, client, phase, progress):
         destination = phase.destination()
         # Call the block function once to generate a document
-        # The block should return a single document or a list of documents
+        # The block should return a single document, a list of documents, or a generator
         result = self._block(None)
         
-        if isinstance(result, list):
-            progress.total = len(result)
-            destination.hint_total(len(result))
-            for doc in result:
+        # Check if result is iterable (duck typing)
+        # Exclude strings and dicts as they're iterable but represent single documents
+        from collections.abc import Iterable
+        if isinstance(result, Iterable) and not isinstance(result, (str, dict)):
+            # It's an iterable - consume it
+            docs = list(result)
+            progress.total = len(docs)
+            destination.hint_total(len(docs))
+            for doc in docs:
                 yield doc
                 progress.update()
         else:
+            # Single document
             progress.total = 1
             destination.hint_total(1)
             yield result

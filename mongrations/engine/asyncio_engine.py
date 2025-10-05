@@ -37,6 +37,7 @@ class AsyncIOEngine(Engine):
         async def phase_process(phase, progress):
             operation = phase.operation()
             name = phase.name()
+            logger.debug(f"phase_process: Starting for phase '{name}'")
             if operation is None:
                 logger.error(f"Phase {name} has no operation")
                 raise Exception(f"Phase {name} has no operation.")
@@ -45,18 +46,23 @@ class AsyncIOEngine(Engine):
             logger.debug(f"Preparing phase {name} (op: {operation}, src: {source}, dst: {phase.destination()})")
             progress.set_description(
                 f"{name} (op: {operation}, src: {source}, dst: {phase.destination()}): Preparing...")
+            logger.debug(f"phase_process: About to call prepare() for phase '{name}'")
             await phase.prepare(self)
+            logger.debug(f"phase_process: prepare() completed for phase '{name}', now running")
             logger.debug(f"Running phase {name}")
             progress.set_description(f"{name} (op: {operation}, src: {source}, dst: {phase.destination()}): Running")
 
             try:
+                logger.debug(f"phase_process: Invoking operation for phase '{name}'")
                 duration, total_docs = await invoke_operation(phase, progress)
+                logger.debug(f"phase_process: Operation completed for phase '{name}', duration={duration:.2f}s, docs={total_docs}")
             except Exception as e:
                 logger.exception(f"An error occurred while invoking operation on phase {name}")
                 raise Exception(f"An error occurred while invoking operation on phase {name}") from e
             progress.set_description(name)
             progress.display(f"Phase {name} took {duration:.2f} seconds and wrote {total_docs} docs")
             progress.update()
+            logger.debug(f"phase_process: Completed for phase '{name}'")
 
         operations = list()
         progress_bars = list[tqdm]()

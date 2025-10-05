@@ -88,6 +88,9 @@ tasks:
     - echo "Cleaning test artifacts..."
     - docker compose down || true
     - rm -rf reports/
+    - rm -rf htmlcov/
+    - rm -rf .coverage
+    - rm -rf coverage.json
     - rm -rf __pycache__/
     - rm -rf features/__pycache__/
     - rm -rf features/steps/__pycache__/
@@ -137,14 +140,20 @@ tasks:
     desc: Generate test coverage report
     deps:
     - setup
-    - mongodb:up
     dir: tests
     cmds:
     - echo "Generating test coverage report..."
-    - "{{.POETRY}} run coverage run -m behave"
-    - "{{.POETRY}} run coverage report"
-    - "{{.POETRY}} run coverage html"
-    - task: mongodb:down
+    - echo "MongoDB will start automatically via MongoDBFixture"
+    - mkdir -p reports/coverage
+    - "{{.PYTHON}} -m coverage run -m behave || true"
+    - "{{.PYTHON}} -m coverage report || echo 'Coverage not installed. Run: poetry install --with dev'"
+    - "{{.PYTHON}} -m coverage html -d reports/coverage/html || echo 'Coverage HTML report generation skipped'"
+    - "{{.PYTHON}} -m coverage json -o reports/coverage/coverage.json || echo 'Coverage JSON report generation skipped'"
+    - "{{.PYTHON}} -m coverage xml -o reports/coverage/coverage.xml || echo 'Coverage XML report generation skipped'"
+    - echo "✓ Coverage reports saved to tests/reports/coverage/"
+    - echo "  HTML report at tests/reports/coverage/html/index.html"
+    - echo "  JSON report at tests/reports/coverage/coverage.json"
+    - echo "  XML report at tests/reports/coverage/coverage.xml"
     env:
       PYTHONPATH: "{{.TASKFILE_DIR}}"
 

@@ -46,7 +46,16 @@ task mongodb:up     # Manually start test MongoDB (usually not needed)
 - **MongoDB Fixture** (`tests/fixtures/mongodb_fixture.py`): Auto-starts Docker Compose MongoDB on first test run
 - **Test Migrations** (`tests/test_migrations/`): Example migrations used by tests (simple_migration.py, aggregation_migration.py, etc.)
 - **Exit Code 201**: Common test failure - check `tests/features/environment.py` logging setup and MongoDB container status
-
+### Writing tests
+- All "mongration" scripts must be placed in `tests/test_migrations/`
+- Procedurally generated mongrations are forbidden. All invoked mongrations must be static files.
+- Adding multiple steps for specific mongrations is forbidden, for example, all of the following steps are not allowed:
+    - When I run a migration creating multiple indexes
+    - When I run a migration creating compound index
+    - When I run a migration creating unique index
+    - When I run a migration creating background index
+- Instead, use the `I run the mongration "{mongration_file_path_with_extension}"` step.
+- Always run the tests by invoking `task test`. Do not run `behave` or `pytest` directly.
 ### Debugging Tests
 1. Set breakpoint in code
 2. Run `task test:debug` (waits for debugger on 0.0.0.0:5678)

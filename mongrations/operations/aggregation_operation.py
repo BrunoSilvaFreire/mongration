@@ -57,6 +57,10 @@ class AggregationOperation(Operation):
 
         cursor = collection.aggregate(agg)
 
+        # Hint the destination with None since we don't know the count upfront
+        if dest is not None:
+            dest.hint_total(None)
+
         sum = 0
         if dest is None:
             async for _ in cursor:

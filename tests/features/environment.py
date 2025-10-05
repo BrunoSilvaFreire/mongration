@@ -109,7 +109,7 @@ def _take_mongodb_snapshot(context, scenario):
     try:
         # Create reports directory if it doesn't exist
         tests_dir = Path(__file__).parent.parent
-        reports_dir = tests_dir / "tests" / "reports"
+        reports_dir = tests_dir / "reports"
         reports_dir.mkdir(parents=True, exist_ok=True)
         
         # Create a sanitized scenario name for the directory
