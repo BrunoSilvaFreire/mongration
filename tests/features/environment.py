@@ -43,9 +43,10 @@ def before_all(context):
         print(f"Fallback to local MongoDB: {context.mongodb_url}")
     
     # Database and collection names for testing
-    # These should be used instead of hardcoded strings in step definitions
+    # IMPORTANT: test_db_name must match the hardcoded database in test migrations
+    # All test migrations use 'test_db' as the database name, so we force it here
+    # to avoid database mismatch issues
     context.state_db_name = 'mongrations'  # Database for migration state tracking
-    context.fallback_db_name = 'test_db'  # Fallback DB used by some test migrations
     
     # Common collection names used in tests
     context.test_collection_name = 'test_collection'
@@ -59,6 +60,29 @@ def before_all(context):
     
     # Engine will be initialized by steps when needed
     context.engine = None
+    
+    # Log all context configuration values
+    print("\n" + "="*70)
+    print("Test Environment Configuration")
+    print("="*70)
+    print(f"MongoDB Configuration:")
+    print(f"  - mongodb_url: {context.mongodb_url}")
+    print(f"  - mongodb_started: {context.mongodb_started}")
+    print(f"\nDatabase Names:")
+    print(f"  - test_db_name: {context.test_db_name}")
+    print(f"  - state_db_name: {context.state_db_name}")
+    print(f"\nCollection Names:")
+    print(f"  - test_collection_name: {context.test_collection_name}")
+    print(f"  - indexed_collection_name: {context.indexed_collection_name}")
+    print(f"  - source_collection_name: {context.source_collection_name}")
+    print(f"  - aggregated_collection_name: {context.aggregated_collection_name}")
+    print(f"  - new_schema_collection_name: {context.new_schema_collection_name}")
+    print(f"\nField Names:")
+    print(f"  - default_index_field: {context.default_index_field}")
+    print(f"\nDirectories:")
+    print(f"  - temp_dir: {context.temp_dir}")
+    print(f"  - mongrations_dir: {context.mongrations_dir}")
+    print("="*70 + "\n")
 
 
 def after_all(context):
@@ -74,25 +98,16 @@ def after_all(context):
 
 def before_scenario(context, scenario):
     """Setup before each scenario"""
-    # Clean the test database using the fixture if available
-    if hasattr(context, 'mongodb_fixture') and context.mongodb_started:
-        context.mongodb_fixture.clean_test_databases()
-    else:
-        # Fallback to manual cleanup
-        try:
-            client = pymongo.MongoClient(context.mongodb_url, serverSelectionTimeoutMS=5000)
-            client.drop_database(context.test_db_name)
-            client.close()
-        except Exception as e:
-            print(f"Warning: Could not clean test database: {e}")
-        
-        # Clean mongrations state database
-        try:
-            client = pymongo.MongoClient(context.mongodb_url, serverSelectionTimeoutMS=5000)
-            client.drop_database(context.state_db_name)
-            client.close()
-        except Exception as e:
-            print(f"Warning: Could not clean mongrations state database: {e}")
+    # Always clean the test database directly since we use a fixed database name
+    try:
+        client = pymongo.MongoClient(context.mongodb_url, serverSelectionTimeoutMS=5000)
+        # Drop the test database (which matches migrations' hardcoded 'test_db')
+        client.drop_database(context.test_db_name)
+        # Drop the mongrations state database
+        client.drop_database(context.state_db_name)
+        client.close()
+    except Exception as e:
+        print(f"Warning: Could not clean databases: {e}")
 
 
 def after_scenario(context, scenario):

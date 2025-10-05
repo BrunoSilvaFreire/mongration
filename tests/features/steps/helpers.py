@@ -24,14 +24,13 @@ def mongodb_client(context, database_name: Optional[str] = None):
             collection = db["my_collection"]
             collection.insert_one({"test": "data"})
     
-    Note: Uses context.test_db_name by default, or context.fallback_db_name if not set.
-    However, test migrations hardcode the fallback DB, so we check both databases.
+    Note: Uses context.test_db_name by default.
     """
     client = None
     try:
         client = pymongo.MongoClient(context.mongodb_url, serverSelectionTimeoutMS=5000)
-        # Use test_db_name from context, fallback to context.fallback_db_name
-        db_name = database_name or getattr(context, 'test_db_name', getattr(context, 'fallback_db_name', 'test_db'))
+        # Use test_db_name from context
+        db_name = database_name or getattr(context, 'test_db_name', 'test_db')
         yield client[db_name]
     finally:
         if client:
@@ -48,58 +47,27 @@ def get_mongrations_state_db(context):
 def collection_exists(context, collection_name: str, database: Optional[str] = None) -> bool:
     """
     Check if a collection exists in the database.
-    
-    Checks both the configured test database and fallback DB since
-    test migrations hardcode the fallback DB as the database name.
     """
-    # First check the specified/default database
-    fallback_db = getattr(context, 'fallback_db_name', 'test_db')
-    db_name = database or getattr(context, 'test_db_name', fallback_db)
+    db_name = database or getattr(context, 'test_db_name', 'test_db')
     with mongodb_client(context, db_name) as db:
-        if collection_name in db.list_collection_names():
-            return True
-    
-    # Also check fallback DB if it's different (migrations hardcode this)
-    if db_name != fallback_db:
-        with mongodb_client(context, fallback_db) as db:
-            return collection_name in db.list_collection_names()
-    
-    return False
+        return collection_name in db.list_collection_names()
 
 
 def get_collection_count(context, collection_name: str, database: Optional[str] = None) -> int:
     """
     Get the document count for a collection.
-    
-    Checks both the configured test database and fallback DB since
-    test migrations hardcode the fallback DB as the database name.
     """
-    # First try the specified/default database
-    fallback_db = getattr(context, 'fallback_db_name', 'test_db')
-    db_name = database or getattr(context, 'test_db_name', fallback_db)
+    db_name = database or getattr(context, 'test_db_name', 'test_db')
     with mongodb_client(context, db_name) as db:
-        count = db[collection_name].count_documents({})
-        if count > 0:
-            return count
-    
-    # Also try fallback DB if it's different
-    if db_name != fallback_db:
-        with mongodb_client(context, fallback_db) as db:
-            return db[collection_name].count_documents({})
-    
-    return 0
+        return db[collection_name].count_documents({})
 
 
 def insert_documents(context, collection_name: str, documents: List[Dict[str, Any]], 
                      database: Optional[str] = None):
     """
     Insert documents into a collection.
-    
-    Uses fallback DB by default since test migrations hardcode this database.
     """
-    # Use fallback DB by default to match where migrations write
-    fallback_db = getattr(context, 'fallback_db_name', 'test_db')
-    db_name = database or fallback_db
+    db_name = database or getattr(context, 'test_db_name', 'test_db')
     with mongodb_client(context, db_name) as db:
         if documents:
             db[collection_name].insert_many(documents)
@@ -145,12 +113,12 @@ def verify_indexes_exist(context, collection_name: str,
         collection_name: Name of the collection
         expected_fields: List of field names that should be indexed
         min_count: Minimum number of indexes expected (including _id)
-        database: Database name (uses context.fallback_db_name if not specified)
+        database: Database name (uses context.test_db_name if not specified)
         
     Returns:
         True if verification passes
     """
-    db_name = database or getattr(context, 'fallback_db_name', 'test_db')
+    db_name = database or getattr(context, 'test_db_name', 'test_db')
     with mongodb_client(context, db_name) as db:
         collection = db[collection_name]
         indexes = list(collection.list_indexes())
@@ -200,9 +168,6 @@ def verify_field_in_documents(context, collection_name: str, field_name: str,
     """
     Verify that documents in a collection contain a specific field.
     
-    Checks both the configured test database and 'test_db' since
-    test migrations hardcode 'test_db' as the database name.
-    
     Args:
         context: Behave context
         collection_name: Name of the collection
@@ -212,7 +177,6 @@ def verify_field_in_documents(context, collection_name: str, field_name: str,
     Returns:
         True if all sampled documents have the field
     """
-    # First try the specified/default database
     db_name = database or getattr(context, 'test_db_name', 'test_db')
     with mongodb_client(context, db_name) as db:
         collection = db[collection_name]
@@ -220,14 +184,5 @@ def verify_field_in_documents(context, collection_name: str, field_name: str,
         
         if docs:
             return all(field_name in doc for doc in docs)
-    
-    # Also try 'test_db' if different
-    if db_name != 'test_db':
-        with mongodb_client(context, 'test_db') as db:
-            collection = db[collection_name]
-            docs = list(collection.find({}).limit(5))
-            
-            if docs:
-                return all(field_name in doc for doc in docs)
     
     return False

@@ -28,7 +28,7 @@ class MongoDBFixture:
         username: str = "testuser",
         password: str = "testpass",
         auth_db: str = "admin",
-        test_db_name: str = "mongrations_test"
+        test_db_name: str = "test_db"
     ):
         """
         Initialize the MongoDB fixture.
