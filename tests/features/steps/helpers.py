@@ -144,11 +144,14 @@ def table_to_documents(table) -> List[Dict[str, Any]]:
     Attempts to convert numeric strings to integers.
     
     Args:
-        table: Behave table object
+        table: Behave table object or None
         
     Returns:
         List of document dictionaries
     """
+    if table is None:
+        return []
+    
     documents = []
     for row in table:
         doc = {}
@@ -186,3 +189,155 @@ def verify_field_in_documents(context, collection_name: str, field_name: str,
             return all(field_name in doc for doc in docs)
     
     return False
+
+
+def run_mongration_cli(context, mongration_file: Optional[str] = None, 
+                      mongrations_dir: Optional[str] = None,
+                      dry_run: bool = False,
+                      command: str = 'run',
+                      status: Optional[str] = None,
+                      index: Optional[int] = None) -> Dict[str, Any]:
+    """
+    Run mongration using the CLI API (not subprocess).
+    
+    Args:
+        context: Behave context
+        mongration_file: Path to single mongration file (absolute path or relative to test_migrations)
+        mongrations_dir: Path to directory of mongrations  
+        dry_run: Whether to run in dry-run mode
+        command: Command to execute ('run' or 'manipulate')
+        status: Status to set (for 'manipulate' command)
+        index: Index to set (for 'manipulate' command)
+    
+    Returns:
+        Dict with keys: 'exit_code', 'stdout', 'stderr'
+    """
+    from mongrations.main import run_mongration_from_args
+    from pathlib import Path
+    import io
+    import logging
+    
+    # Capture stderr from logging
+    stderr_capture = io.StringIO()
+    stderr_handler = logging.StreamHandler(stderr_capture)
+    stderr_handler.setLevel(logging.ERROR)
+    migration_logger = logging.getLogger('mongrations')
+    migration_logger.addHandler(stderr_handler)
+    
+    try:
+        kwargs = {
+            'url': context.mongodb_url,
+            'dry_run': dry_run
+        }
+        
+        if mongration_file:
+            # If it's not an absolute path, assume it's in test_migrations
+            file_path = Path(mongration_file)
+            if not file_path.is_absolute():
+                from pathlib import Path as P
+                test_migrations_dir = P(__file__).parent.parent.parent / "test_migrations"
+                file_path = test_migrations_dir / mongration_file
+            kwargs['mongration'] = str(file_path)
+        elif mongrations_dir:
+            kwargs['mongrations_dir'] = str(mongrations_dir)
+        
+        if command == 'manipulate':
+            kwargs['command'] = command
+            if status:
+                kwargs['status'] = status
+            if index is not None:
+                kwargs['index'] = index
+        
+        exit_code = run_mongration_from_args(**kwargs)
+        stderr_output = stderr_capture.getvalue()
+        
+        return {
+            'exit_code': exit_code,
+            'stdout': '',
+            'stderr': stderr_output
+        }
+    except Exception as e:
+        import traceback
+        formatted_exc = traceback.format_exc()
+        migration_logger.error(formatted_exc)
+        stderr_output = stderr_capture.getvalue() + formatted_exc
+        
+        return {
+            'exit_code': 1,
+            'stdout': '',
+            'stderr': stderr_output
+        }
+    finally:
+        migration_logger.removeHandler(stderr_handler)
+        stderr_capture.close()
+
+
+def verify_cli_success(context) -> None:
+    """
+    Verify that a CLI command succeeded.
+    Raises AssertionError if it failed.
+    """
+    assert hasattr(context, 'cli_result'), "No CLI result found in context"
+    assert context.cli_result['exit_code'] == 0, \
+        f"Command failed with exit code {context.cli_result['exit_code']}\nStderr: {context.cli_result['stderr']}"
+
+
+def verify_cli_failure(context) -> None:
+    """
+    Verify that a CLI command failed.
+    Raises AssertionError if it succeeded.
+    """
+    assert hasattr(context, 'cli_result'), "No CLI result found in context"
+    assert context.cli_result['exit_code'] != 0, \
+        f"Command should have failed but succeeded with exit code 0"
+
+
+def verify_error_message_contains(context, *keywords) -> None:
+    """
+    Verify that error output contains specific keywords.
+    
+    Args:
+        context: Behave context
+        keywords: One or more keywords to check for (case-insensitive)
+    """
+    stderr = context.cli_result.get('stderr', '')
+    stdout = context.cli_result.get('stdout', '')
+    output = (stderr + stdout).lower()
+    
+    assert any(keyword.lower() in output for keyword in keywords), \
+        f"Error message doesn't contain any of {keywords}: {output}"
+
+
+def get_state_document(context, migration_name: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """
+    Get the state document for a migration.
+    
+    Args:
+        context: Behave context
+        migration_name: Name of the migration. If None, gets the latest.
+    
+    Returns:
+        State document or None if not found
+    """
+    with mongodb_client(context, context.state_db_name) as state_db:
+        state_collection = state_db["state"]
+        
+        if migration_name:
+            return state_collection.find_one({"name": migration_name})
+        else:
+            return state_collection.find_one(sort=[("_id", -1)])
+
+
+def count_completed_migrations(context) -> int:
+    """
+    Count the number of completed migrations in the state database.
+    
+    Args:
+        context: Behave context
+    
+    Returns:
+        Number of completed migrations
+    """
+    with mongodb_client(context, context.state_db_name) as state_db:
+        state_collection = state_db["state"]
+        return state_collection.count_documents({"status": "COMPLETED"})

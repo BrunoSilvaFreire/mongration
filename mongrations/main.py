@@ -41,6 +41,9 @@ def run_mongration_from_args(url, mongration=None, mongrations_dir=None, dry_run
     
     try:
         if command == 'run':
+            # Validate that at least one source is provided
+            if not mongration and not mongrations_dir:
+                raise ValueError("Either --mongration or --mongrations-dir must be specified")
             args.mongration = mongration
             args.mongrations_dir = mongrations_dir
             args.dry_run = dry_run

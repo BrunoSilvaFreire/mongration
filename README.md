@@ -57,6 +57,12 @@ task test -- tests/features/phase_operations.feature
 # Run tests with debug mode
 task test:debug
 
+# Re-run only failed tests (fast iteration)
+task test:rerun
+
+# Show which tests failed
+task test:failed
+
 # Clean test artifacts
 task clean
 ```
@@ -85,5 +91,26 @@ open tests/reports/coverage/index.html
 # JSON report
 cat tests/reports/coverage/coverage.json
 ```
+
+### HTML Reports
+
+Beautiful HTML test reports are generated automatically using `behave-html-pretty-formatter`:
+
+```bash
+# Run tests (generates HTML report)
+task test
+
+# Open the HTML report
+task html:open
+# Or manually: open tests/reports/behave-report.html
+```
+
+The HTML reports provide:
+- ✅ Collapsible scenarios and features
+- 🎨 Color-coded test results
+- 📊 Summary statistics and duration tracking
+- 🔍 Detailed step execution information
+
+See [HTML_REPORTS.md](HTML_REPORTS.md) for complete documentation.
 
 See [TEST_COVERAGE_IMPROVEMENTS.md](TEST_COVERAGE_IMPROVEMENTS.md) for detailed coverage information.

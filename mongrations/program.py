@@ -121,8 +121,9 @@ class MongrationProgram:
         if mongration_script is not None:
             mongration_path = Path(mongration_script)
             if not mongration_path.exists() or not mongration_path.is_file():
-                logger.error(f"The specified mongration script does not exist: {mongration_script}")
-                return
+                error_msg = f"The specified mongration script does not exist: {mongration_script}"
+                logger.error(error_msg)
+                raise FileNotFoundError(error_msg)
             logger.debug(f"Adding mongration script: {mongration_script}")
             paths.append(mongration_path)
 

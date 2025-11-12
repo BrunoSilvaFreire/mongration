@@ -108,6 +108,9 @@ def before_scenario(context, scenario):
         client.close()
     except Exception as e:
         print(f"Warning: Could not clean databases: {e}")
+    
+    # Clean up any leftover export files from previous test runs
+    _cleanup_export_files()
 
 
 def after_scenario(context, scenario):
@@ -145,8 +148,8 @@ def _take_mongodb_snapshot(context, scenario):
         # Create a sanitized scenario name for the directory
         scenario_name = scenario.name.replace(' ', '_').replace('/', '_')
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        snapshot_dir_name = f"snapshot_{scenario_name}_{timestamp}"
-        snapshot_dir = reports_dir / snapshot_dir_name
+        snapshot_dir_name = f"{scenario_name}_{timestamp}"
+        snapshot_dir = reports_dir / "snapshots" / snapshot_dir_name
         snapshot_dir.mkdir(parents=True, exist_ok=True)
         
         # Connect to MongoDB
@@ -239,3 +242,28 @@ def _convert_to_json_serializable(obj):
                 obj[i] = str(item)
             elif isinstance(item, (dict, list)):
                 _convert_to_json_serializable(item)
+
+
+def _cleanup_export_files():
+    """
+    Clean up export files from /tmp directory before each scenario.
+    This prevents tests from finding files from previous runs.
+    """
+    import glob
+    
+    # Patterns for export files created by test migrations
+    patterns = [
+        '/tmp/mongrations_export*.json',
+        '/tmp/mongrations_export*.ejson',
+        '/tmp/mongrations_export*.csv',
+        '/tmp/mongrations_file_dest*.jsonl',
+        '/tmp/mongrations_import*.json',
+        '/tmp/mongrations_import*.ejson',
+    ]
+    
+    for pattern in patterns:
+        for file_path in glob.glob(pattern):
+            try:
+                os.remove(file_path)
+            except Exception as e:
+                print(f"Warning: Could not delete {file_path}: {e}")

@@ -73,8 +73,9 @@ class DocumentPythonOperation(AbstractPythonOperation):
         logger.debug(f"DocumentPythonOperation._iterate: Got cursor, estimated_total={estimated_total}")
         progress.total = estimated_total
 
-        logger.debug(f"DocumentPythonOperation._iterate: Calling hint_total({estimated_total}) on destination {destination}")
-        destination.hint_total(estimated_total)
+        if destination is not None:
+            logger.debug(f"DocumentPythonOperation._iterate: Calling hint_total({estimated_total}) on destination {destination}")
+            destination.hint_total(estimated_total)
         logger.debug(f"DocumentPythonOperation._iterate: Starting to iterate over cursor")
         doc_count = 0
         async for doc in cursor:
@@ -106,14 +107,16 @@ class GeneratorPythonOperation(AbstractPythonOperation):
             # It's an iterable - consume it
             docs = list(result)
             progress.total = len(docs)
-            destination.hint_total(len(docs))
+            if destination is not None:
+                destination.hint_total(len(docs))
             for doc in docs:
                 yield doc
                 progress.update()
         else:
             # Single document
             progress.total = 1
-            destination.hint_total(1)
+            if destination is not None:
+                destination.hint_total(1)
             yield result
             progress.update()
 

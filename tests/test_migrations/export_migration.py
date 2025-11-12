@@ -7,8 +7,12 @@ def mongration(migration):
     import os
     
     phase = migration.phase("Export to file")
-    phase.from_collection("test_db", "test_collection")
+    phase.from_collection("test_db", "export_test_collection")
     
-    # Create temp file for export
+    # Use identity transform to pass documents through
+    phase.use_python(lambda doc: doc)
+    
+    # Write to file destination
     export_path = os.path.join(tempfile.gettempdir(), "mongrations_export_test.json")
-    phase.export_to(export_path)
+    phase.into_file(export_path, mode='w', encoding='utf-8')
+

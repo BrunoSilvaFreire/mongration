@@ -3,8 +3,10 @@ from mongrations.io.source import CollectionSource
 
 
 class DeleteCollectionOperation(CollectionOperation):
-    def __init__(self):
+    def __init__(self, database: str, collection: str):
         super().__init__()
+        self._database = database
+        self._collection = collection
         self._phase = None
 
     async def invoke(self, client, progress, phase):
@@ -15,7 +17,4 @@ class DeleteCollectionOperation(CollectionOperation):
         await collection.drop()
 
     def __str__(self):
-        if self._phase:
-            collection_info = self._format_collection_info(self._phase)
-            return f"Delete Collection ({collection_info})"
-        return "Delete Collection"
+        return f"Delete Collection ({self._database}.{self._collection})"
